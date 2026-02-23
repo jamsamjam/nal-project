@@ -40,12 +40,12 @@ main(int argc, char* argv[])
         LogComponentEnable("UdpEchoServerApplication", LOG_LEVEL_INFO);
     }
 
-    nCsma = nCsma == 0 ? 1 : nCsma;
+    nCsma = nCsma == 0 ? 1 : nCsma; // n-1 “extra” nodes that compose CSMA network
 
     NodeContainer p2pNodes; // nodes that connect point to point link
     p2pNodes.Create(2);
 
-    NodeContainer csmaNodes; // nodes that will be part of the bus (CSMA) network
+    NodeContainer csmaNodes; // nodes that will be part of the CSMA
     csmaNodes.Add(p2pNodes.Get(1));
     csmaNodes.Create(nCsma);
 
@@ -58,14 +58,15 @@ main(int argc, char* argv[])
 
     CsmaHelper csma;
     csma.SetChannelAttribute("DataRate", StringValue("100Mbps"));
+    // Here it's specified by a *channel* because a CSMA network doesn't allow one to mix
     csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(6560)));
 
     NetDeviceContainer csmaDevices;
     csmaDevices = csma.Install(csmaNodes);
 
     InternetStackHelper stack;
-    stack.Install(p2pNodes.Get(0));
-    stack.Install(csmaNodes);
+    stack.Install(p2pNodes.Get(0)); // install the stacks on the remaining p2pNodes node
+    stack.Install(csmaNodes); // and all of the nodes in the csmaNodes container
 
     Ipv4AddressHelper address;
     address.SetBase("10.1.1.0", "255.255.255.0");
@@ -76,7 +77,7 @@ main(int argc, char* argv[])
     Ipv4InterfaceContainer csmaInterfaces;
     csmaInterfaces = address.Assign(csmaDevices);
 
-    UdpEchoServerHelper echoServer(9);
+    UdpEchoServerHelper echoServer(9); // server port number -> later can be changed using SetAttribute
 
     ApplicationContainer serverApps = echoServer.Install(csmaNodes.Get(nCsma));
     serverApps.Start(Seconds(1));
@@ -94,7 +95,18 @@ main(int argc, char* argv[])
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
     pointToPoint.EnablePcapAll("second");
-    csma.EnablePcap("second", csmaDevices.Get(1), true);
+    csma.EnablePcap("second", csmaDevices.Get(1), true); // **
+    // gathering trace information from multi-p2p network
+    // 1. create a trace file for each net device and store only the packets processed by that net device
+    // 2. pick one of the devices -> place it in promiscuous mode (**)
+
+    // In promiscuous mode, a device captures and processes all packets on the shared network medium
+    // Normally, it only processes those with dest MAC addr of its own or broadcast frames
+
+    // Instead, we get a trace from a single device
+    // pointToPoint.EnablePcap("second", p2pNodes.Get(0)->GetId(), 0);
+    // csma.EnablePcap("second", csmaNodes.Get(nCsma)->GetId(), 0, false);
+    // csma.EnablePcap("second", csmaNodes.Get(nCsma-1)->GetId(), 0, false);
 
     Simulator::Run();
     Simulator::Destroy();
