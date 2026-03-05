@@ -1,2 +1,13 @@
 .DS_Store
 .vscode/
+
+# ns-3
+*.o
+*.pyc
+*.log
+*~
+.lock-ns3_*
+.ns3rc
+cmake-cache/
+build/
+
