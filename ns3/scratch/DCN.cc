@@ -128,7 +128,7 @@ struct FatTreeTopo
     uint32_t k;
     uint32_t half;
     uint32_t numHosts;
-    uint32_t numEdge;
+    uint32_t numTor;
     uint32_t numAgg;
     uint32_t numCore;
     uint32_t total;
@@ -136,57 +136,57 @@ struct FatTreeTopo
     explicit FatTreeTopo(uint32_t k) : k(k), half(k / 2) // this->x = x;
     {
         numHosts = (k * k * k) / 4;
-        numEdge = (k * k) / 2;
+        numTor = (k * k) / 2;
         numAgg = (k * k) / 2;
         numCore = half * half; // k^2/4
-        total = numHosts + numEdge + numAgg + numCore;
+        total = numHosts + numTor + numAgg + numCore;
     }
 
-    uint32_t hostId(uint32_t pod, uint32_t edge, uint32_t pos) const
+    uint32_t hostId(uint32_t pod, uint32_t tor, uint32_t pos) const
     {
-        return pod * half * half + edge * half + pos;
+        return pod * half * half + tor * half + pos;
     }
 
-    uint32_t edgeId(uint32_t pod, uint32_t idx) const
+    uint32_t torId(uint32_t pod, uint32_t idx) const
     {
         return numHosts + pod * half + idx; // TODO
     }
 
     uint32_t aggId(uint32_t pod, uint32_t idx) const
     {
-        return numHosts + numEdge + pod * half + idx;
+        return numHosts + numTor + pod * half + idx;
     }
 
     uint32_t coreId(uint32_t group, uint32_t idx) const
     {
-        return numHosts + numEdge + numAgg + group * half + idx;
+        return numHosts + numTor + numAgg + group * half + idx;
     }
 
     std::vector<FatTreeLink> buildLinks() const
     {
         std::vector<FatTreeLink> links; // array that dynamically changes the size
 
-        auto edge = [&](uint32_t a, uint32_t b) {
+        auto tor = [&](uint32_t a, uint32_t b) {
             links.push_back({a, b, std::to_string(a) + "-" + std::to_string(b)});
         };
 
         // for each pod, we have:
-        // 'half' edge switches, which has 'half' hosts each
+        // 'half' ToR switches, which has 'half' hosts each
 
         for (uint32_t p = 0; p < k; p++)
             for (uint32_t e = 0; e < half; e++)
                 for (uint32_t h = 0; h < half; h++)
-                    edge(hostId(p, e, h), edgeId(p, e));
+                    tor(hostId(p, e, h), torId(p, e));
 
         for (uint32_t p = 0; p < k; p++)
             for (uint32_t e = 0; e < half; e++)
                 for (uint32_t a = 0; a < half; a++)
-                    edge(edgeId(p, e), aggId(p, a));
+                    tor(torId(p, e), aggId(p, a));
 
         for (uint32_t p = 0; p < k; p++)
             for (uint32_t a = 0; a < half; a++)
                 for (uint32_t j = 0; j < half; j++)
-                    edge(aggId(p, a), coreId(a, j));
+                    tor(aggId(p, a), coreId(a, j));
 
         return links;
     }
@@ -236,7 +236,7 @@ main(int argc, char* argv[])
 
     std::cout << "Fat-tree k=" << k
               << " hosts=" << topo.numHosts
-              << " edge=" << topo.numEdge
+              << " tor=" << topo.numTor
               << " agg=" << topo.numAgg
               << " core=" << topo.numCore
               << " links=" << links.size() << "\n";

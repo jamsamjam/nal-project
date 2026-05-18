@@ -28,7 +28,7 @@ type Dot = { key: string; x: number; y: number };
 function numericToSvgId(num: number, k: number): string {
   const half = k / 2;
   const numHosts = (k * k * k) / 4;
-  const numEdge = (k * k) / 2;
+  const numTor = (k * k) / 2;
   const numAgg = (k * k) / 2;
 
   if (num < numHosts) {
@@ -36,15 +36,15 @@ function numericToSvgId(num: number, k: number): string {
     const rem = num % (half * half);
     return `pod-${p}-host-${Math.floor(rem / half)}-${rem % half}`;
   }
-  if (num < numHosts + numEdge) {
+  if (num < numHosts + numTor) {
     const off = num - numHosts;
     return `pod-${Math.floor(off / half)}-access-${off % half}`;
   }
-  if (num < numHosts + numEdge + numAgg) {
-    const off = num - numHosts - numEdge;
+  if (num < numHosts + numTor + numAgg) {
+    const off = num - numHosts - numTor;
     return `pod-${Math.floor(off / half)}-agg-${off % half}`;
   }
-  return `core-${num - numHosts - numEdge - numAgg}`;
+  return `core-${num - numHosts - numTor - numAgg}`;
 }
 
 // "12-34" -> [svgId, svgId]
@@ -61,12 +61,12 @@ function parseLinkSvgIds(linkId: string, k: number): [string, string] | null {
 function svgIdToNumeric(svgId: string, k: number): number {
   const half = k / 2;
   const numHosts = (k * k * k) / 4;
-  const numEdge = (k * k) / 2;
+  const numTor = (k * k) / 2;
   const numAgg = (k * k) / 2;
   const core = svgId.match(/^core-(\d+)$/);
-  if (core) return numHosts + numEdge + numAgg + Number(core[1]);
+  if (core) return numHosts + numTor + numAgg + Number(core[1]);
   const agg = svgId.match(/^pod-(\d+)-agg-(\d+)$/);
-  if (agg) return numHosts + numEdge + Number(agg[1]) * half + Number(agg[2]);
+  if (agg) return numHosts + numTor + Number(agg[1]) * half + Number(agg[2]);
   const acc = svgId.match(/^pod-(\d+)-access-(\d+)$/);
   if (acc) return numHosts + Number(acc[1]) * half + Number(acc[2]);
   const host = svgId.match(/^pod-(\d+)-host-(\d+)-(\d+)$/);
@@ -393,7 +393,7 @@ export default function Home() {
               {(["core", "agg", "access", "host"] as Node["type"][]).map((t) => (
                 <span key={t}>
                   <span className="mr-2 inline-block h-3 w-3 rounded-full border-2" style={{ borderColor: nodeStroke(t) }} />
-                  {t === "access" ? "Edge" : t.charAt(0).toUpperCase() + t.slice(1)}
+                  {t === "access" ? "ToR" : t.charAt(0).toUpperCase() + t.slice(1)}
                 </span>
               ))}
             </div>
