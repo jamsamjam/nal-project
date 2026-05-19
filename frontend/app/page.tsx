@@ -2,6 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace JSX {
+    interface IntrinsicElements {
+      [elemName: string]: unknown;
+    }
+  }
+}
+
 type PacketRow = {
   id: number;
   size: number;
