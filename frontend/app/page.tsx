@@ -24,7 +24,7 @@ type RunResult = { runTag: string; linkIds: string[] };
 type Node = {
   id: string;
   label: string;
-  type: "core" | "agg" | "access" | "host";
+  type: "core" | "agg" | "tor" | "host";
   x: number;
   y: number;
 };
@@ -47,7 +47,7 @@ function numericToSvgId(num: number, k: number): string {
   }
   if (num < numHosts + numTor) {
     const off = num - numHosts;
-    return `pod-${Math.floor(off / half)}-access-${off % half}`;
+    return `pod-${Math.floor(off / half)}-tor-${off % half}`;
   }
   if (num < numHosts + numTor + numAgg) {
     const off = num - numHosts - numTor;
@@ -76,7 +76,7 @@ function svgIdToNumeric(svgId: string, k: number): number {
   if (core) return numHosts + numTor + numAgg + Number(core[1]);
   const agg = svgId.match(/^pod-(\d+)-agg-(\d+)$/);
   if (agg) return numHosts + numTor + Number(agg[1]) * half + Number(agg[2]);
-  const acc = svgId.match(/^pod-(\d+)-access-(\d+)$/);
+  const acc = svgId.match(/^pod-(\d+)-tor-(\d+)$/);
   if (acc) return numHosts + Number(acc[1]) * half + Number(acc[2]);
   const host = svgId.match(/^pod-(\d+)-host-(\d+)-(\d+)$/);
   if (host) return Number(host[1]) * half * half + Number(host[2]) * half + Number(host[3]);
@@ -121,7 +121,7 @@ function buildFatTree(k: number, startX: number) {
   const podWidth = 220;
   const coreY = 60;
   const aggY = 180;
-  const accessY = 300;
+  const torY = 300;
   const hostY = 420;
 
   const coreCount = half * half;
@@ -141,13 +141,13 @@ function buildFatTree(k: number, startX: number) {
       for (let c = 0; c < half; c++) links.push({ from: aggId, to: `core-${a * half + c}` });
     }
     for (let e = 0; e < half; e++) {
-      const accessId = `pod-${p}-access-${e}`;
-      nodes.push({ id: accessId, label: `P${p} E${e}`, type: "access", x: podX + e * 70, y: accessY });
-      for (let a = 0; a < half; a++) links.push({ from: accessId, to: `pod-${p}-agg-${a}` });
+      const torId = `pod-${p}-tor-${e}`;
+      nodes.push({ id: torId, label: `P${p} T${e}`, type: "tor", x: podX + e * 70, y: torY });
+      for (let a = 0; a < half; a++) links.push({ from: torId, to: `pod-${p}-agg-${a}` });
       for (let h = 0; h < half; h++) {
         const hostId = `pod-${p}-host-${e}-${h}`;
         nodes.push({ id: hostId, label: `H${p}.${e}.${h}`, type: "host", x: podX + e * 70 - 18 + h * 36, y: hostY });
-        links.push({ from: hostId, to: accessId });
+        links.push({ from: hostId, to: torId });
       }
     }
   }
@@ -158,7 +158,8 @@ function buildFatTree(k: number, startX: number) {
 function nodeStroke(type: Node["type"]) {
   if (type === "core") return "rgb(186, 186, 186)";
   if (type === "agg") return "rgb(62, 117, 255)";
-  if (type === "access") return "rgb(138, 197, 255)";
+  if (type === "tor") return "rgb(138, 197, 255)";
+  if (type === "host") return "rgb(138, 197, 255)";
   return "rgb(212, 212, 216)";
 }
 
@@ -399,10 +400,10 @@ export default function Home() {
 
           <section className="relative overflow-visible rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900/40">
             <div className="mb-4 flex flex-wrap gap-4 text-xs text-stone-500 dark:text-stone-400">
-              {(["core", "agg", "access", "host"] as Node["type"][]).map((t) => (
+              {(["core", "agg", "tor", "host"] as Node["type"][]).map((t) => (
                 <span key={t}>
                   <span className="mr-2 inline-block h-3 w-3 rounded-full border-2" style={{ borderColor: nodeStroke(t) }} />
-                  {t === "access" ? "ToR" : t.charAt(0).toUpperCase() + t.slice(1)}
+                  {t === "tor" ? "ToR" : t.charAt(0).toUpperCase() + t.slice(1)}
                 </span>
               ))}
             </div>
