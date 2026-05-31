@@ -282,6 +282,7 @@ main(int argc, char* argv[])
     std::string queueSizeStr = std::to_string(bdpBytes) + "B";
 
     std::string tcpVariant = tcpType.substr(tcpType.rfind(':') + 1);
+    std::string queueVariant = queueDiscType.substr(queueDiscType.rfind(':') + 1);
     std::string runTag = "L" + std::to_string(layers)
         + "_k" + std::to_string(k)
         + "_t" + std::to_string(torCount)
@@ -289,7 +290,8 @@ main(int argc, char* argv[])
         + "_s" + std::to_string(serversPerTor)
         + "_d" + linkDelay
         + "_r" + linkRate
-        + "_tcp" + tcpVariant;
+        + "_tcp" + tcpVariant
+        + "_q" + queueVariant;
     
     for (auto& c : runTag) if (c == '/' || c == ' ') c = '_';
     std::string csvDir = csvBase + "/" + runTag;

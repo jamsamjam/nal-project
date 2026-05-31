@@ -39,9 +39,10 @@ app.mount("/output", StaticFiles(directory=output_path), name="output")
 
 def build_run_tag(req: RunRequest) -> str:
     tcp_variant = req.tcp.split("::")[-1]
+    queue_variant = req.queue.split("::")[-1]
     return (
         f"L{req.layers}_k{req.k}_t{req.torCount}_a{req.aggCount}_s{req.serversPerTor}"
-        f"_d{req.linkDelay}_r{req.linkRate}_tcp{tcp_variant}"
+        f"_d{req.linkDelay}_r{req.linkRate}_tcp{tcp_variant}_q{queue_variant}"
     )
 
 
