@@ -654,12 +654,14 @@ export default function Home() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-4 shadow-xl dark:bg-stone-950">
             <div className="mb-3 flex items-center justify-between">
+              <div />
               <button
                 type="button"
                 onClick={() => setWizardOpen(false)}
-                className="rounded-md border border-stone-300 px-2 py-1 text-xs text-stone-700 dark:border-stone-700 dark:text-stone-200"
+                aria-label="Close topology wizard"
+                className="text-lg leading-none text-stone-700 hover:text-stone-900 dark:text-stone-200 dark:hover:text-white"
               >
-                Close
+                ×
               </button>
             </div>
 
