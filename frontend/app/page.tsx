@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildFatTree, nodeStroke, type Node } from "@/lib/topology";
+import TopologyWizard, { type TopologyConfig } from "@/components/TopologyWizard";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -124,6 +125,8 @@ export default function Home() {
   const [animating, setAnimating] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedQueueCsvId, setSelectedQueueCsvId] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [topologyConfig, setTopologyConfig] = useState<TopologyConfig | null>(null);
 
   const animRaf = useRef<number | null>(null);
   const animStartSim = useRef(0);
@@ -296,6 +299,16 @@ export default function Home() {
     }
   }
 
+  function applyWizardConfig(config: TopologyConfig) {
+    setTopologyConfig(config);
+    setLinkRate(config.link.rate);
+    setLinkDelay(config.link.delay);
+    if (config.topology.type === "three_layer") {
+      setK(String(config.topology.k));
+    }
+    setWizardOpen(false);
+  }
+
   return (
     <>
       <button
@@ -312,6 +325,13 @@ export default function Home() {
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-stone-500 dark:text-stone-400">ns-3 simulation</p>
               <h1 className="mt-3 text-3xl font-semibold">Fat-Tree Topology</h1>
+              <button
+                type="button"
+                onClick={() => setWizardOpen(true)}
+                className="mt-4 rounded-xl border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-800 transition hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100 dark:hover:bg-stone-800"
+              >
+                Open Configuration
+              </button>
             </div>
 
             <div className="w-fit rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
@@ -497,6 +517,24 @@ export default function Home() {
           )}
         </div>
       </main>
+
+      {wizardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-4 shadow-xl dark:bg-stone-950">
+            <div className="mb-3 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setWizardOpen(false)}
+                className="rounded-md border border-stone-300 px-2 py-1 text-xs text-stone-700 dark:border-stone-700 dark:text-stone-200"
+              >
+                Close
+              </button>
+            </div>
+
+            <TopologyWizard onSubmit={applyWizardConfig} />
+          </div>
+        </div>
+      )}
     </>
   );
 }
