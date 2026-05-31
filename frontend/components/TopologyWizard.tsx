@@ -49,7 +49,7 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
   const steps = useMemo<Step[]>(() => {
     if (layers === 1) return ["layers", "servers", "link", "queue"];
     if (layers === 2) return ["layers", "shape", "servers", "link", "queue"];
-    return ["layers", "shape", "servers", "link", "queue"];
+    return ["layers", "shape", "link", "queue"];
   }, [layers]);
 
   const step = steps[stepIndex];
@@ -126,16 +126,16 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
 
         {step === "shape" && layers === 2 && (
           <div className="space-y-3">
-            <p className="text-sm font-semibold">M ToRs, K Agg</p>
-            <NumberField label="M (ToR count)" value={torCount} onChange={setTorCount} min={1} />
-            <NumberField label="K (Aggregation count)" value={aggCount} onChange={setAggCount} min={1} />
+            <p className="text-sm font-semibold"># ToRs, # Agg</p>
+            <NumberField label="# ToRs" value={torCount} onChange={setTorCount} min={1} />
+            <NumberField label="# Agg" value={aggCount} onChange={setAggCount} min={1} />
           </div>
         )}
 
         {step === "shape" && layers === 3 && (
           <div className="space-y-3">
             <p className="text-sm font-semibold">ToR + Aggregation + Core</p>
-            <NumberField label="k" value={k} onChange={setK} min={2} step={2} />
+            <NumberField label="# Pods" value={k} onChange={setK} min={2} step={2} />
           </div>
         )}
 
