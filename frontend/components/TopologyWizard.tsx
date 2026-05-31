@@ -9,7 +9,7 @@ export type TopologyConfig = {
   topology:
     | { type: "single_tor"; torCount: 1; serversPerTor: number }
     | { type: "two_layer"; torCount: number; aggCount: number; serversPerTor: number }
-    | { type: "three_layer"; k: number; serversPerPod: number };
+    | { type: "three_layer"; k: number };
   link: {
     rate: string;
     delay: string;
@@ -38,8 +38,6 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
   const [k, setK] = useState(4);
 
   const [serversPerTor, setServersPerTor] = useState(8);
-  const [serversPerPod, setServersPerPod] = useState(16);
-
   const [linkRate, setLinkRate] = useState("10Gbps");
   const [linkDelay, setLinkDelay] = useState("1ms");
 
@@ -62,7 +60,7 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
         ? { type: "single_tor" as const, torCount: 1 as const, serversPerTor }
         : layers === 2
           ? { type: "two_layer" as const, torCount, aggCount, serversPerTor }
-          : { type: "three_layer" as const, k, serversPerPod };
+          : { type: "three_layer" as const, k };
 
     return {
       layers,
@@ -70,7 +68,7 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
       link: { rate: linkRate, delay: linkDelay },
       queue: { congestionAlgo, queueAlgo },
     };
-  }, [layers, torCount, aggCount, k, serversPerTor, serversPerPod, linkRate, linkDelay, congestionAlgo, queueAlgo]);
+  }, [layers, torCount, aggCount, k, serversPerTor, linkRate, linkDelay, congestionAlgo, queueAlgo]);
 
   function goNext() {
     setStepIndex((prev) => Math.min(prev + 1, steps.length - 1));
@@ -145,13 +143,6 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
           <div className="space-y-3">
             <p className="text-sm font-semibold"># Servers per ToR</p>
             <NumberField label="Servers per ToR" value={serversPerTor} onChange={setServersPerTor} min={1} />
-          </div>
-        )}
-
-        {step === "servers" && layers === 3 && (
-          <div className="space-y-3">
-            <p className="text-sm font-semibold"># Servers per Pod</p>
-            <NumberField label="Servers per Pod" value={serversPerPod} onChange={setServersPerPod} min={1} />
           </div>
         )}
 

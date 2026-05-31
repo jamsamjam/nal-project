@@ -13,13 +13,12 @@ flowchart LR
     L1S --> D[linkrate, delay]
     D --> C[congestion/queue algo]
 
-    A -->|2| L2[M ToRs, K Agg]
+    A -->|2| L2[# ToRs, # Agg]
     L2 --> L1S
 
     A -->|3| L3[ToR + Aggregation + Core]
-    L3 --> L3N[k]
-    L3N --> L3A[# Servers per Pod]
-    L3A --> D
+    L3 --> L3N[# Pods]
+    L3N --> D
 ```
 
 ## Quick Start
