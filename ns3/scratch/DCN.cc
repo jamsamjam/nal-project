@@ -123,42 +123,76 @@ struct FatTreeLink
     std::string id; // "from-to"
 };
 
-struct FatTreeTopo
+struct DcnTopo
 {
-    uint32_t k;
-    uint32_t half;
+    uint32_t layers;
+    uint32_t kPods;
+    uint32_t torCount;
+    uint32_t aggCount;
+    uint32_t serversPerTor;
     uint32_t numHosts;
     uint32_t numTor;
     uint32_t numAgg;
     uint32_t numCore;
     uint32_t total;
 
-    explicit FatTreeTopo(uint32_t k) : k(k), half(k / 2) // this->x = x;
+    explicit DcnTopo(uint32_t layers,
+                     uint32_t kPods,
+                     uint32_t torCount,
+                     uint32_t aggCount,
+                     uint32_t serversPerTor)
+        : layers(layers),
+          kPods(kPods),
+          torCount(torCount),
+          aggCount(aggCount),
+          serversPerTor(serversPerTor)
     {
-        numHosts = (k * k * k) / 4;
-        numTor = (k * k) / 2;
-        numAgg = (k * k) / 2;
-        numCore = half * half; // k^2/4
+        if (layers == 3)
+        {
+            uint32_t half = kPods / 2;
+            numHosts = (kPods * kPods * kPods) / 4;
+            numTor = (kPods * kPods) / 2;
+            numAgg = (kPods * kPods) / 2;
+            numCore = half * half;
+        }
+        else if (layers == 2)
+        {
+            numHosts = torCount * serversPerTor;
+            numTor = torCount;
+            numAgg = aggCount;
+            numCore = 0;
+        }
+        else
+        {
+            numHosts = serversPerTor;
+            numTor = 1;
+            numAgg = 0;
+            numCore = 0;
+        }
         total = numHosts + numTor + numAgg + numCore;
     }
 
     uint32_t hostId(uint32_t pod, uint32_t tor, uint32_t pos) const
     {
+        uint32_t half = kPods / 2;
         return pod * half * half + tor * half + pos;
     }
 
     uint32_t torId(uint32_t pod, uint32_t idx) const
     {
+        uint32_t half = kPods / 2;
         return numHosts + pod * half + idx; // TODO
     }
 
     uint32_t aggId(uint32_t pod, uint32_t idx) const
     {
+        uint32_t half = kPods / 2;
         return numHosts + numTor + pod * half + idx;
     }
 
     uint32_t coreId(uint32_t group, uint32_t idx) const
     {
+        uint32_t half = kPods / 2;
         return numHosts + numTor + numAgg + group * half + idx;
     }
 
@@ -170,23 +204,45 @@ struct FatTreeTopo
             links.push_back({a, b, std::to_string(a) + "-" + std::to_string(b)});
         };
 
-        // for each pod, we have:
-        // 'half' ToR switches, which has 'half' hosts each
+        if (layers == 3)
+        {
+            uint32_t half = kPods / 2;
+            for (uint32_t p = 0; p < kPods; p++)
+                for (uint32_t e = 0; e < half; e++)
+                    for (uint32_t h = 0; h < half; h++)
+                        tor(hostId(p, e, h), torId(p, e));
 
-        for (uint32_t p = 0; p < k; p++)
-            for (uint32_t e = 0; e < half; e++)
-                for (uint32_t h = 0; h < half; h++)
-                    tor(hostId(p, e, h), torId(p, e));
+            for (uint32_t p = 0; p < kPods; p++)
+                for (uint32_t e = 0; e < half; e++)
+                    for (uint32_t a = 0; a < half; a++)
+                        tor(torId(p, e), aggId(p, a));
 
-        for (uint32_t p = 0; p < k; p++)
-            for (uint32_t e = 0; e < half; e++)
+            for (uint32_t p = 0; p < kPods; p++)
                 for (uint32_t a = 0; a < half; a++)
-                    tor(torId(p, e), aggId(p, a));
-
-        for (uint32_t p = 0; p < k; p++)
-            for (uint32_t a = 0; a < half; a++)
-                for (uint32_t j = 0; j < half; j++)
-                    tor(aggId(p, a), coreId(a, j));
+                    for (uint32_t j = 0; j < half; j++)
+                        tor(aggId(p, a), coreId(a, j));
+        }
+        else if (layers == 2)
+        {
+            auto torNodeId = [&](uint32_t idx) { return numHosts + idx; };
+            auto aggNodeId = [&](uint32_t idx) { return numHosts + numTor + idx; };
+            for (uint32_t t = 0; t < torCount; t++)
+            {
+                for (uint32_t h = 0; h < serversPerTor; h++)
+                {
+                    uint32_t host = t * serversPerTor + h;
+                    tor(host, torNodeId(t));
+                }
+                for (uint32_t a = 0; a < aggCount; a++)
+                    tor(torNodeId(t), aggNodeId(a));
+            }
+        }
+        else
+        {
+            uint32_t torNode = numHosts;
+            for (uint32_t h = 0; h < numHosts; h++)
+                tor(h, torNode);
+        }
 
         return links;
     }
@@ -195,18 +251,28 @@ struct FatTreeTopo
 int
 main(int argc, char* argv[])
 {
+    uint32_t layers = 3;
     uint32_t k = 4;
+    uint32_t torCount = 2;
+    uint32_t aggCount = 2;
+    uint32_t serversPerTor = 8;
     std::string csvBase = "../backend/output";
     std::string linkRate = "10Mbps";
     std::string linkDelay = "1ms";
     std::string tcpType = "ns3::TcpNewReno";
+    std::string queueDiscType = "ns3::FifoQueueDisc";
     const double simTime = 10.0;
 
     CommandLine cmd(__FILE__);
+    cmd.AddValue("layers", "Topology layers: 1, 2, or 3", layers);
     cmd.AddValue("k", "Fat-tree degree (even, e.g. 4 or 8)", k);
+    cmd.AddValue("torCount", "Number of ToR switches for 2-layer topology", torCount);
+    cmd.AddValue("aggCount", "Number of Aggregation switches for 2-layer topology", aggCount);
+    cmd.AddValue("serversPerTor", "Servers per ToR for 1/2-layer topology", serversPerTor);
     cmd.AddValue("linkRate", "Link data rate", linkRate);
     cmd.AddValue("linkDelay", "Link propagation delay", linkDelay);
     cmd.AddValue("tcp", "TCP variant", tcpType);
+    cmd.AddValue("queue", "QueueDisc type", queueDiscType);
     cmd.Parse(argc, argv);
 
     // max amount of data at any given time = data stacked until getting ACK
@@ -216,7 +282,11 @@ main(int argc, char* argv[])
     std::string queueSizeStr = std::to_string(bdpBytes) + "B";
 
     std::string tcpVariant = tcpType.substr(tcpType.rfind(':') + 1);
-    std::string runTag = "k" + std::to_string(k)
+    std::string runTag = "L" + std::to_string(layers)
+        + "_k" + std::to_string(k)
+        + "_t" + std::to_string(torCount)
+        + "_a" + std::to_string(aggCount)
+        + "_s" + std::to_string(serversPerTor)
         + "_d" + linkDelay
         + "_r" + linkRate
         + "_tcp" + tcpVariant;
@@ -225,19 +295,29 @@ main(int argc, char* argv[])
     std::string csvDir = csvBase + "/" + runTag;
     std::filesystem::create_directories(csvDir);
 
-    if (k < 2 || k % 2 != 0)
+    if (layers < 1 || layers > 3)
+    {
+        std::cerr << "layers must be 1, 2, or 3\n";
+        return 1;
+    }
+
+    if (layers == 3 && (k < 2 || k % 2 != 0))
     {
         std::cerr << "k must be even and >= 2\n";
         return 1;
     }
 
-    FatTreeTopo topo(k);
+    DcnTopo topo(layers, k, torCount, aggCount, serversPerTor);
     std::vector<FatTreeLink> links = topo.buildLinks();
 
-    std::cout << "Fat-tree k=" << k
+    std::cout << "DCN layers=" << layers
+              << " k=" << k
+              << " tor=" << torCount
+              << " agg=" << aggCount
+              << " serversPerTor=" << serversPerTor
               << " hosts=" << topo.numHosts
-              << " tor=" << topo.numTor
-              << " agg=" << topo.numAgg
+              << " topoTor=" << topo.numTor
+              << " topoAgg=" << topo.numAgg
               << " core=" << topo.numCore
               << " links=" << links.size() << "\n";
 
@@ -251,7 +331,7 @@ main(int argc, char* argv[])
     stack.Install(nodes);
 
     TrafficControlHelper tch;
-    tch.SetRootQueueDisc("ns3::FifoQueueDisc", "MaxSize", StringValue(queueSizeStr)); // TODO
+    tch.SetRootQueueDisc(queueDiscType, "MaxSize", StringValue(queueSizeStr)); // TODO
 
     struct LinkQdisc {
         uint32_t from, to;

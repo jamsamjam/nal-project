@@ -8,10 +8,15 @@ import subprocess
 
 
 class RunRequest(BaseModel):
+    layers: int = 3
     k: int = 4
+    torCount: int = 2
+    aggCount: int = 2
+    serversPerTor: int = 8
     linkRate: str = "10Mbps"
     linkDelay: str = "1ms"
-    tcp: str = "ns3::TcpNewReno"
+    tcp: str = "TcpNewReno"
+    queue: str = "FifoQueueDisc"
 
 
 app = FastAPI()
@@ -32,7 +37,14 @@ app.mount("/output", StaticFiles(directory=output_path), name="output")
 
 def build_run_tag(req: RunRequest) -> str:
     tcp_variant = req.tcp.split("::")[-1]
-    return f"k{req.k}_d{req.linkDelay}_r{req.linkRate}_tcp{tcp_variant}"
+    return (
+        f"L{req.layers}_k{req.k}_t{req.torCount}_a{req.aggCount}_s{req.serversPerTor}"
+        f"_d{req.linkDelay}_r{req.linkRate}_tcp{tcp_variant}"
+    )
+
+
+def ns3_type(name: str) -> str:
+    return name if name.startswith("ns3::") else f"ns3::{name}"
 
 
 def get_link_ids(run_tag: str) -> list[str]:
@@ -52,10 +64,15 @@ def run(req: RunRequest):
     if not run_dir.exists():
         args = [
             "./ns3", "run", "scratch/DCN", "--",
+            f"--layers={req.layers}",
             f"--k={req.k}",
+            f"--torCount={req.torCount}",
+            f"--aggCount={req.aggCount}",
+            f"--serversPerTor={req.serversPerTor}",
             f"--linkRate={req.linkRate}",
             f"--linkDelay={req.linkDelay}",
-            f"--tcp={req.tcp}",
+            f"--tcp={ns3_type(req.tcp)}",
+            f"--queue={ns3_type(req.queue)}",
         ]
 
         try:

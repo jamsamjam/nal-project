@@ -50,13 +50,13 @@ function numericToSvgId(num: number, k: number): string {
 }
 
 // "12-34" -> [svgId, svgId]
-function parseLinkSvgIds(linkId: string, k: number): [string, string] | null {
+function parseLinkSvgIds(linkId: string, resolveNumericNodeId: (num: number) => string): [string, string] | null {
   const parts = linkId.split("-");
   if (parts.length !== 2) return null;
   const from = parseInt(parts[0]);
   const to = parseInt(parts[1]);
   if (isNaN(from) || isNaN(to)) return null;
-  return [numericToSvgId(from, k), numericToSvgId(to, k)];
+  return [resolveNumericNodeId(from), resolveNumericNodeId(to)];
 }
 
 // "pod-0-host-0-0" -> 0
@@ -191,8 +191,6 @@ export default function Home() {
   const numericK = Number(k);
   const svgHeight = 500;
   const startX = 80;
-  const isThreeLayer = topologyConfig?.topology.type === "three_layer";
-
   const topology = useMemo(() => {
     if (!topologyConfig) return buildFatTree(numericK, startX);
     if (topologyConfig.topology.type === "single_tor") {
@@ -218,6 +216,24 @@ export default function Home() {
     () => new Map(topology.nodes.map((n) => [n.id, n])),
     [topology.nodes]
   );
+  const resolveNumericNodeId = useMemo(() => {
+    return (num: number) => {
+      if (topologyConfig?.topology.type === "single_tor") {
+        const s = topologyConfig.topology.serversPerTor;
+        if (num < s) return `host-0-${num}`;
+        return "tor-0";
+      }
+      if (topologyConfig?.topology.type === "two_layer") {
+        const s = topologyConfig.topology.serversPerTor;
+        const t = topologyConfig.topology.torCount;
+        const hosts = s * t;
+        if (num < hosts) return `host-${Math.floor(num / s)}-${num % s}`;
+        if (num < hosts + t) return `tor-${num - hosts}`;
+        return `agg-${num - hosts - t}`;
+      }
+      return numericToSvgId(num, numericK);
+    };
+  }, [topologyConfig, numericK]);
 
   const lineStroke = theme === "dark" ? "rgb(68, 64, 60)" : "rgb(214, 211, 209)";
   const nodeFill = theme === "dark" ? "rgb(28, 25, 23)" : "rgb(255, 255, 255)";
@@ -240,7 +256,7 @@ export default function Home() {
     const depths: Record<string, number> = {}; // link `string` -> current queue byte
 
     for (const [linkId, pkts] of Object.entries(packets)) {
-      const ids = parseLinkSvgIds(linkId, numericK);
+      const ids = parseLinkSvgIds(linkId, resolveNumericNodeId);
       const fromNode = ids ? nodeMap.get(ids[0]) : null;
       const toNode = ids ? nodeMap.get(ids[1]) : null;
       let depth = 0;
@@ -278,7 +294,7 @@ export default function Home() {
       depths[linkId] = depth;
     }
     return { dots, depths };
-  }, [animTime, packets, nodeMap, numericK]);
+  }, [animTime, packets, nodeMap, resolveNumericNodeId]);
 
   const hasPackets = Object.keys(packets).length > 0;
 
@@ -286,12 +302,12 @@ export default function Home() {
     if (!selectedQueueCsvId) return null;
     const pkts = packets[selectedQueueCsvId];
     const parts = selectedQueueCsvId.split("-");
-    const fromLabel = nodeMap.get(numericToSvgId(parseInt(parts[0]), numericK))?.label ?? parts[0];
-    const toLabel = nodeMap.get(numericToSvgId(parseInt(parts[1]), numericK))?.label ?? parts[1];
+    const fromLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[0])))?.label ?? parts[0];
+    const toLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[1])))?.label ?? parts[1];
     const currentBytes = pkts?.filter(p => p.enqueue_time <= animTime && p.dequeue_time >= animTime).reduce((s, p) => s + p.size, 0) ?? 0;
     const ratio = currentBytes / queueCapacityBytes;
     return { label: `${fromLabel} → ${toLabel}`, currentBytes, capacityBytes: queueCapacityBytes, ratio };
-  }, [selectedQueueCsvId, packets, animTime, queueCapacityBytes, numericK, nodeMap]);
+  }, [selectedQueueCsvId, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId]);
 
   useEffect(() => {
     if (!animating) {
@@ -333,10 +349,63 @@ export default function Home() {
     setSelectedQueueCsvId(null);
 
     try {
+      const runPayload = (() => {
+        if (!topologyConfig) {
+          return {
+            layers: 3,
+            k: Number(k),
+            torCount: 2,
+            aggCount: 2,
+            serversPerTor: 8,
+            linkRate,
+            linkDelay,
+            tcp: "TcpNewReno",
+            queue: "FifoQueueDisc",
+          };
+        }
+        if (topologyConfig.topology.type === "single_tor") {
+          return {
+            layers: 1,
+            k: Number(k),
+            torCount: 1,
+            aggCount: 0,
+            serversPerTor: topologyConfig.topology.serversPerTor,
+            linkRate: topologyConfig.link.rate,
+            linkDelay: topologyConfig.link.delay,
+            tcp: topologyConfig.queue.congestionAlgo,
+            queue: topologyConfig.queue.queueAlgo,
+          };
+        }
+        if (topologyConfig.topology.type === "two_layer") {
+          return {
+            layers: 2,
+            k: Number(k),
+            torCount: topologyConfig.topology.torCount,
+            aggCount: topologyConfig.topology.aggCount,
+            serversPerTor: topologyConfig.topology.serversPerTor,
+            linkRate: topologyConfig.link.rate,
+            linkDelay: topologyConfig.link.delay,
+            tcp: topologyConfig.queue.congestionAlgo,
+            queue: topologyConfig.queue.queueAlgo,
+          };
+        }
+        return {
+          layers: 3,
+          k: topologyConfig.topology.k,
+          torCount: 2,
+          aggCount: 2,
+          serversPerTor: 8,
+          linkRate: topologyConfig.link.rate,
+          linkDelay: topologyConfig.link.delay,
+          tcp: topologyConfig.queue.congestionAlgo,
+          queue: topologyConfig.queue.queueAlgo,
+        };
+      })();
+
       const res = await fetch("/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ linkRate, linkDelay, k: Number(k) }),
+        body: JSON.stringify(runPayload),
       });
       if (!res.ok) throw new Error(`Backend Error: ${res.status}`);
       const data: RunResult = await res.json();
@@ -408,18 +477,13 @@ export default function Home() {
                 <input value={k} onChange={(e) => setK(e.target.value)}
                   className="h-11 w-20 rounded-xl border border-stone-300 bg-stone-50 px-3 text-sm text-stone-900 outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-100 dark:focus:border-stone-500"
                   placeholder="k" />
-                <button onClick={runSimulation} disabled={loading || Boolean(topology.error) || (Boolean(topologyConfig) && !isThreeLayer)}
+                <button onClick={runSimulation} disabled={loading || Boolean(topology.error)}
                   className="h-11 rounded-xl bg-stone-900 px-4 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200">
                   {loading ? "Running..." : "Run"}
                 </button>
               </div>
 
               {topology.error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{topology.error}</p>}
-              {topologyConfig && !isThreeLayer && (
-                <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">
-                  Current backend simulation is Fat-Tree based. Run is enabled for 3-layer configuration.
-                </p>
-              )}
               {error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p>}
             </div>
           </header>
