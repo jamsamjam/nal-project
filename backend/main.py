@@ -117,13 +117,27 @@ def get_link_packets(run_tag: str, link_id: str):
         raise HTTPException(status_code=404, detail=f"Link '{link_id}' not found in run '{run_tag}'.")
 
     packets = []
+
+    def parse_required_int(row: dict[str, str], key: str) -> int:
+        value = row.get(key)
+        if value is None:
+            raise ValueError(f"missing '{key}'")
+        value = value.strip()
+        if value == "":
+            raise ValueError(f"empty '{key}'")
+        return int(value)
+
     with open(csv_path, newline="") as f:
-        for row in csv.DictReader(f):
-            packets.append({
-                "id": int(row["id"]),
-                "size": int(row["size"]),
-                "enqueue_time": int(row["enqueue_time"]) / 1e9,
-                "dequeue_time": int(row["dequeue_time"]) / 1e9,
-                "arrive_time": int(row["arrive_time"]) / 1e9,
-            })
+        for row_idx, row in enumerate(csv.DictReader(f), start=2):
+            try:
+                packets.append({
+                    "id": parse_required_int(row, "id"),
+                    "size": parse_required_int(row, "size"),
+                    "enqueue_time": parse_required_int(row, "enqueue_time") / 1e9,
+                    "dequeue_time": parse_required_int(row, "dequeue_time") / 1e9,
+                    "arrive_time": parse_required_int(row, "arrive_time") / 1e9,
+                })
+            except (ValueError, TypeError):
+                # Skip malformed/blank rows instead of failing the whole response.
+                continue
     return {"linkId": link_id, "packets": packets}
