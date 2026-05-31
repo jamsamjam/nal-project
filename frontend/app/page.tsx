@@ -441,6 +441,16 @@ export default function Home() {
     setWizardOpen(false);
   }
 
+  const appliedConfig = useMemo(() => {
+    if (topologyConfig) return topologyConfig;
+    return {
+      layers: 3 as const,
+      topology: { type: "three_layer" as const, k: Number(k) },
+      link: { rate: linkRate, delay: linkDelay },
+      queue: { congestionAlgo: "TcpNewReno", queueAlgo: "FifoQueueDisc" },
+    };
+  }, [topologyConfig, k, linkRate, linkDelay]);
+
   return (
     <>
       <button
@@ -457,28 +467,39 @@ export default function Home() {
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-stone-500 dark:text-stone-400">ns-3 simulation</p>
               <h1 className="mt-3 text-3xl font-semibold">Fat-Tree Topology</h1>
-              <button
-                type="button"
-                onClick={() => setWizardOpen(true)}
-                className="mt-4 rounded-xl border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-800 transition hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100 dark:hover:bg-stone-800"
-              >
-                Open Configuration
-              </button>
             </div>
 
             <div className="w-fit rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
-              <div className="flex items-center gap-3">
-                <input value={linkRate} onChange={(e) => setLinkRate(e.target.value)}
-                  className="h-11 w-40 rounded-xl border border-stone-300 bg-stone-50 px-3 text-sm text-stone-900 outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-100 dark:focus:border-stone-500"
-                  placeholder="10Mbps" />
-                <input value={linkDelay} onChange={(e) => setLinkDelay(e.target.value)}
-                  className="h-11 w-32 rounded-xl border border-stone-300 bg-stone-50 px-3 text-sm text-stone-900 outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-100 dark:focus:border-stone-500"
-                  placeholder="1ms" />
-                <input value={k} onChange={(e) => setK(e.target.value)}
-                  className="h-11 w-20 rounded-xl border border-stone-300 bg-stone-50 px-3 text-sm text-stone-900 outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-100 dark:focus:border-stone-500"
-                  placeholder="k" />
+              <div className="flex items-center justify-between gap-1">
+                <div className="mt-3 flex flex-wrap gap-1 text-xs">
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Layers: {appliedConfig.layers}</span>
+                {appliedConfig.topology.type === "three_layer" && (
+                  <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800"># Pods: {appliedConfig.topology.k}</span>
+                )}
+                {appliedConfig.topology.type === "two_layer" && (
+                  <>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800"># ToRs: {appliedConfig.topology.torCount}</span>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800"># Agg: {appliedConfig.topology.aggCount}</span>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Servers/ToR: {appliedConfig.topology.serversPerTor}</span>
+                  </>
+                )}
+                {appliedConfig.topology.type === "single_tor" && (
+                  <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Servers/ToR: {appliedConfig.topology.serversPerTor}</span>
+                )}
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Rate: {appliedConfig.link.rate}</span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Delay: {appliedConfig.link.delay}</span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">TCP: {appliedConfig.queue.congestionAlgo}</span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Queue: {appliedConfig.queue.queueAlgo}</span>
+              </div>
+                <button
+                  type="button"
+                  onClick={() => setWizardOpen(true)}
+                  className="h-10 rounded-xl bg-stone-900 px-4 mr-3 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200"
+                >
+                  Configure
+                </button>
                 <button onClick={runSimulation} disabled={loading || Boolean(topology.error)}
-                  className="h-11 rounded-xl bg-stone-900 px-4 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200">
+                  className="h-10 rounded-xl bg-stone-900 px-4 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200">
                   {loading ? "Running..." : "Run"}
                 </button>
               </div>
