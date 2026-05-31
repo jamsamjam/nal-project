@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from pathlib import Path
 import csv
 import subprocess
+from threading import Lock
 
 
 class RunRequest(BaseModel):
@@ -31,6 +32,7 @@ app.add_middleware(
 ns3_path = Path("../ns3").resolve()
 output_path = Path("./output").resolve()
 output_path.mkdir(exist_ok=True)
+_ns3_ready_lock = Lock()
 
 app.mount("/output", StaticFiles(directory=output_path), name="output")
 
@@ -56,8 +58,23 @@ def get_link_ids(run_tag: str) -> list[str]:
     return [f.stem.replace("packets_", "") for f in csv_files]
 
 
+def ensure_ns3_ready():
+    with _ns3_ready_lock:
+        build_dir = ns3_path / "build"
+        if build_dir.exists():
+            return
+
+        try:
+            subprocess.run(["./ns3", "configure"], cwd=ns3_path, check=True)
+            subprocess.run(["./ns3", "build"], cwd=ns3_path, check=True)
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"ns-3 setup failed: {e}")
+
+
 @app.post("/run")
 def run(req: RunRequest):
+    ensure_ns3_ready()
+
     run_tag = build_run_tag(req)
     run_dir = output_path / run_tag
 
