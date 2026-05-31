@@ -317,7 +317,7 @@ export default function Home() {
     const wallStart = performance.now();
     const simStart = animStartSim.current;
     function frame() {
-      const sim = simStart + (performance.now() - wallStart) / (1000 * 30);
+      const sim = simStart + (performance.now() - wallStart) / (1000 * 60);
       if (sim >= simEndTime) { setAnimTime(simEndTime); setAnimating(false); return; }
       setAnimTime(sim);
       animRaf.current = requestAnimationFrame(frame);
