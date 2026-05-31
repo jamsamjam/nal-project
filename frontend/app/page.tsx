@@ -24,6 +24,7 @@ type PacketRow = {
 type RunResult = { runTag: string; linkIds: string[] };
 
 type Dot = { key: string; x: number; y: number };
+type RenderTopology = { nodes: Node[]; links: { from: string; to: string }[]; error: string | null };
 
 // 3 -> pod-0-host-1-1
 function numericToSvgId(num: number, k: number): string {
@@ -107,6 +108,48 @@ function queueColor(ratio: number, fallback: string): string {
   return fallback;
 }
 
+function buildSingleTorTopology(serversPerTor: number, startX: number): RenderTopology {
+  const nodes: Node[] = [];
+  const links: { from: string; to: string }[] = [];
+  const torX = startX + 240;
+  const torY = 220;
+  nodes.push({ id: "tor-0", label: "ToR0", type: "tor", x: torX, y: torY });
+  const count = Math.max(1, serversPerTor);
+  for (let i = 0; i < count; i++) {
+    const x = torX - ((count - 1) * 34) / 2 + i * 34;
+    const id = `host-0-${i}`;
+    nodes.push({ id, label: `H${i}`, type: "host", x, y: 380 });
+    links.push({ from: id, to: "tor-0" });
+  }
+  return { nodes, links, error: null };
+}
+
+function buildTwoLayerTopology(torCount: number, aggCount: number, serversPerTor: number, startX: number): RenderTopology {
+  const nodes: Node[] = [];
+  const links: { from: string; to: string }[] = [];
+  const tors = Math.max(1, torCount);
+  const aggs = Math.max(1, aggCount);
+  const spacing = 120;
+  const baseX = startX + 80;
+
+  for (let i = 0; i < aggs; i++) {
+    nodes.push({ id: `agg-${i}`, label: `A${i}`, type: "agg", x: baseX + i * spacing, y: 140 });
+  }
+  for (let t = 0; t < tors; t++) {
+    const torId = `tor-${t}`;
+    nodes.push({ id: torId, label: `T${t}`, type: "tor", x: baseX + t * spacing, y: 260 });
+    for (let a = 0; a < aggs; a++) links.push({ from: torId, to: `agg-${a}` });
+    const hosts = Math.max(1, serversPerTor);
+    for (let h = 0; h < hosts; h++) {
+      const hx = baseX + t * spacing - ((hosts - 1) * 20) / 2 + h * 20;
+      const hostId = `host-${t}-${h}`;
+      nodes.push({ id: hostId, label: `H${t}.${h}`, type: "host", x: hx, y: 390 });
+      links.push({ from: hostId, to: torId });
+    }
+  }
+  return { nodes, links, error: null };
+}
+
 
 
 export default function Home() {
@@ -146,11 +189,31 @@ export default function Home() {
   }
 
   const numericK = Number(k);
-  const svgWidth = Math.max(900, numericK * 220);
   const svgHeight = 500;
   const startX = 80;
+  const isThreeLayer = topologyConfig?.topology.type === "three_layer";
 
-  const topology = useMemo(() => buildFatTree(numericK, startX), [numericK, startX]);
+  const topology = useMemo(() => {
+    if (!topologyConfig) return buildFatTree(numericK, startX);
+    if (topologyConfig.topology.type === "single_tor") {
+      return buildSingleTorTopology(topologyConfig.topology.serversPerTor, startX);
+    }
+    if (topologyConfig.topology.type === "two_layer") {
+      return buildTwoLayerTopology(
+        topologyConfig.topology.torCount,
+        topologyConfig.topology.aggCount,
+        topologyConfig.topology.serversPerTor,
+        startX
+      );
+    }
+    return buildFatTree(topologyConfig.topology.k, startX);
+  }, [topologyConfig, numericK, startX]);
+
+  const svgWidth = useMemo(() => {
+    if (!topology.nodes.length) return 900;
+    const maxX = Math.max(...topology.nodes.map((n) => n.x));
+    return Math.max(900, maxX + 120);
+  }, [topology.nodes]);
   const nodeMap = useMemo(
     () => new Map(topology.nodes.map((n) => [n.id, n])),
     [topology.nodes]
@@ -345,13 +408,18 @@ export default function Home() {
                 <input value={k} onChange={(e) => setK(e.target.value)}
                   className="h-11 w-20 rounded-xl border border-stone-300 bg-stone-50 px-3 text-sm text-stone-900 outline-none focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-100 dark:focus:border-stone-500"
                   placeholder="k" />
-                <button onClick={runSimulation} disabled={loading || Boolean(topology.error)}
+                <button onClick={runSimulation} disabled={loading || Boolean(topology.error) || (Boolean(topologyConfig) && !isThreeLayer)}
                   className="h-11 rounded-xl bg-stone-900 px-4 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200">
                   {loading ? "Running..." : "Run"}
                 </button>
               </div>
 
               {topology.error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{topology.error}</p>}
+              {topologyConfig && !isThreeLayer && (
+                <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">
+                  Current backend simulation is Fat-Tree based. Run is enabled for 3-layer configuration.
+                </p>
+              )}
               {error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p>}
             </div>
           </header>
