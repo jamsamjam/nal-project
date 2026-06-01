@@ -25,6 +25,23 @@ type RunResult = { runTag: string; linkIds: string[] };
 
 type Dot = { key: string; x: number; y: number };
 type RenderTopology = { nodes: Node[]; links: { from: string; to: string }[]; error: string | null };
+type QueueSelectionInfo = {
+  csvId: string;
+  label: string;
+  currentBytes: number;
+  capacityBytes: number;
+  ratio: number;
+  points: { time: number; size: number; delay: number }[]; // size: queued bytes, delay: avg waiting delay(sec)
+};
+type QueueOverlay = {
+  csvId: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  markerX: number;
+  markerY: number;
+};
 
 // 3 -> pod-0-host-1-1
 function numericToSvgId(num: number, k: number): string {
@@ -152,9 +169,9 @@ function parseQueueCapacityBytes(linkRate: string, maxRttSeconds: number): numbe
 }
 
 function queueColor(ratio: number, fallback: string): string {
-  if (ratio > 0.5) return "rgb(72, 66, 229))"
-  else if (ratio > 0.6) return "rgb(97, 93, 217))"
-  else if (ratio > 0.8) return "rgb(42, 34, 255)";
+  if (ratio > 0.8) return "rgb(42, 34, 255)";
+  if (ratio > 0.6) return "rgb(72, 66, 229)";
+  if (ratio > 0.5) return "rgb(97, 93, 217)";
   return fallback;
 }
 
@@ -203,6 +220,7 @@ function buildTwoLayerTopology(torCount: number, aggCount: number, serversPerTor
 
 
 export default function Home() {
+  const MAX_SELECTED_QUEUES = 4;
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [linkRate, setLinkRate] = useState("10Mbps");
   const [linkDelay, setLinkDelay] = useState("1ms");
@@ -217,7 +235,8 @@ export default function Home() {
   const [animTime, setAnimTime] = useState(0);
   const [animating, setAnimating] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [selectedQueueCsvId, setSelectedQueueCsvId] = useState<string | null>(null);
+  const [selectedQueueCsvIds, setSelectedQueueCsvIds] = useState<string[]>([]);
+  const [focusedQueueCsvId, setFocusedQueueCsvId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [topologyConfig, setTopologyConfig] = useState<TopologyConfig | null>(null);
 
@@ -352,16 +371,67 @@ export default function Home() {
 
   const hasPackets = Object.keys(packets).length > 0;
 
-  const selectedInfo = useMemo(() => {
-    if (!selectedQueueCsvId) return null;
-    const pkts = packets[selectedQueueCsvId];
-    const parts = selectedQueueCsvId.split("-");
-    const fromLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[0])))?.label ?? parts[0];
-    const toLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[1])))?.label ?? parts[1];
-    const currentBytes = pkts?.filter(p => p.enqueue_time <= animTime && p.dequeue_time >= animTime).reduce((s, p) => s + p.size, 0) ?? 0;
-    const ratio = currentBytes / queueCapacityBytes;
-    return { label: `${fromLabel} → ${toLabel}`, currentBytes, capacityBytes: queueCapacityBytes, ratio };
-  }, [selectedQueueCsvId, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId]);
+  const selectedInfos = useMemo<QueueSelectionInfo[]>(() => {
+    return selectedQueueCsvIds.map((csvId) => {
+      const pkts = packets[csvId] ?? [];
+      const parts = csvId.split("-");
+      const fromLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[0])))?.label ?? parts[0];
+      const toLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[1])))?.label ?? parts[1];
+      const currentBytes = pkts
+        .filter((p) => p.enqueue_time <= animTime && p.dequeue_time >= animTime)
+        .reduce((s, p) => s + p.size, 0);
+      const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
+      const sampleCount = 180;
+      const maxTime = simEndTime > 0 ? simEndTime : 1;
+      const points = Array.from({ length: sampleCount + 1 }, (_, i) => {
+        const t = (i / sampleCount) * maxTime;
+        let queuedBytes = 0;
+        let waitSum = 0;
+        let count = 0;
+        for (const p of pkts) {
+          if (p.enqueue_time <= t && p.dequeue_time >= t) {
+            queuedBytes += p.size;
+            waitSum += Math.max(0, t - p.enqueue_time);
+            count += 1;
+          }
+        }
+        const avgWaitingDelay = count > 0 ? waitSum / count : 0;
+        return { time: t, size: queuedBytes, delay: avgWaitingDelay };
+      });
+      return { csvId, label: `${fromLabel} → ${toLabel}`, currentBytes, capacityBytes: queueCapacityBytes, ratio, points };
+    });
+  }, [selectedQueueCsvIds, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime]);
+
+  const selectedQueueOverlays = useMemo<QueueOverlay[]>(() => {
+    const overlays: QueueOverlay[] = [];
+    for (const csvId of selectedQueueCsvIds) {
+      const [fromText, toText] = csvId.split("-");
+      const fromNum = parseInt(fromText);
+      const toNum = parseInt(toText);
+      if (Number.isNaN(fromNum) || Number.isNaN(toNum)) continue;
+      const fromSvg = resolveNumericNodeId(fromNum);
+      const toSvg = resolveNumericNodeId(toNum);
+      const fromNode = nodeMap.get(fromSvg);
+      const toNode = nodeMap.get(toSvg);
+      if (!fromNode || !toNode) continue;
+      const dx = toNode.x - fromNode.x;
+      const dy = toNode.y - fromNode.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const offset = 16;
+      const markerX = len > 0 ? fromNode.x + (dx / len) * offset : fromNode.x;
+      const markerY = len > 0 ? fromNode.y + (dy / len) * offset : fromNode.y;
+      overlays.push({
+        csvId,
+        fromX: fromNode.x,
+        fromY: fromNode.y,
+        toX: toNode.x,
+        toY: toNode.y,
+        markerX,
+        markerY,
+      });
+    }
+    return overlays;
+  }, [selectedQueueCsvIds, resolveNumericNodeId, nodeMap]);
 
   useEffect(() => {
     if (!animating) {
@@ -400,7 +470,8 @@ export default function Home() {
     setAnimating(false);
     setAnimTime(0);
     setSelectedNodeId(null);
-    setSelectedQueueCsvId(null);
+    setSelectedQueueCsvIds([]);
+    setFocusedQueueCsvId(null);
 
     try {
       const runPayload = (() => {
@@ -618,6 +689,33 @@ export default function Home() {
                   <circle key={dot.key} cx={dot.x} cy={dot.y} r={4} fill="rgb(210, 217, 255)" />
                 ))}
 
+                {selectedQueueOverlays.map((q) => {
+                  const isFocused = focusedQueueCsvId === q.csvId;
+                  return (
+                    <g key={`overlay-${q.csvId}`} style={{ cursor: "pointer" }} onClick={() => setFocusedQueueCsvId(q.csvId)}>
+                      <line
+                        x1={q.fromX}
+                        y1={q.fromY}
+                        x2={q.toX}
+                        y2={q.toY}
+                        stroke="rgb(220, 229, 124)"
+                        strokeWidth={isFocused ? 3.5 : 2}
+                        strokeDasharray={isFocused ? "0" : "4 3"}
+                        strokeOpacity={0.95}
+                      />
+                      <rect
+                        x={q.markerX - 7}
+                        y={q.markerY - 5}
+                        width={14}
+                        height={10}
+                        rx={2}
+                        fill={isFocused ? "rgb(220, 229, 124)" : "white"}
+                        strokeWidth={isFocused ? 2 : 1}
+                      />
+                    </g>
+                  );
+                })}
+
                 {selectedNodeId && (() => {
                   const fromNode = nodeMap.get(selectedNodeId);
                   if (!fromNode) return null;
@@ -635,14 +733,26 @@ export default function Home() {
                     const len = Math.sqrt(dx * dx + dy * dy);
                     const bx = fromNode.x + (dx / len) * 30;
                     const by = fromNode.y + (dy / len) * 30;
-                    const isSelected = selectedQueueCsvId === csvId;
+                    const isSelected = selectedQueueCsvIds.includes(csvId);
                     return (
                       <rect key={csvId}
                         x={bx - 7} y={by - 4} width={14} height={8} rx={2}
-                        fill="rgb(220, 229, 124)"
+                        fill="white"
                         stroke={isSelected ? "white" : "none"} strokeWidth={isSelected ? 1.5 : 0}
                         style={{ cursor: "pointer" }}
-                        onClick={(e) => { e.stopPropagation(); setSelectedQueueCsvId(prev => prev === csvId ? null : csvId); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedQueueCsvIds((prev) => {
+                            if (prev.includes(csvId)) {
+                              if (focusedQueueCsvId === csvId) setFocusedQueueCsvId(null);
+                              return prev.filter((id) => id !== csvId);
+                            }
+                            const next = [...prev, csvId];
+                            setFocusedQueueCsvId(csvId);
+                            if (next.length <= MAX_SELECTED_QUEUES) return next;
+                            return next.slice(next.length - MAX_SELECTED_QUEUES);
+                          });
+                        }}
                       />
                     );
                   });
@@ -655,7 +765,6 @@ export default function Home() {
                       style={{ cursor: "pointer" }}
                       onClick={() => {
                         setSelectedNodeId(prev => prev === node.id ? null : node.id);
-                        setSelectedQueueCsvId(null);
                       }}>
                       {isHost ? (
                         <rect x={node.x - 10} y={node.y - 8} width="20" height="16" rx="4"
@@ -674,20 +783,66 @@ export default function Home() {
               </svg>
             </div>
 
-            {selectedInfo && (
-              <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 p-4 dark:border-stone-700 dark:bg-stone-900">
-                <p className="truncate font-mono text-xs text-stone-500 dark:text-stone-400">{selectedInfo.label}</p>
-                <div className="mt-3">
-                  <div className="mb-1 flex justify-between text-xs text-stone-400">
-                    <span>packet size / capacity</span>
-                    <span>{selectedInfo.currentBytes} / {selectedInfo.capacityBytes} B</span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-stone-700">
-                    <div
-                      className="h-full rounded-full transition-all duration-75"
-                      style={{ width: `${Math.min(selectedInfo.ratio * 100, 100)}%`, backgroundColor: "rgb(220, 229, 124)" }}
-                    />
-                  </div>
+            {selectedInfos.length > 0 && (
+              <div className="mt-4 overflow-x-auto">
+                <div className="flex min-w-full gap-3">
+                  {selectedInfos.map((info) => {
+                    const width = 280;
+                    const height = 120;
+                    const pad = 16;
+                    const innerW = width - pad * 2;
+                    const innerH = height - pad * 2;
+                    const maxTime = simEndTime > 0 ? simEndTime : 1;
+                    const maxSize = Math.max(1, ...info.points.map((p) => p.size));
+                    const maxDelay = Math.max(1e-6, ...info.points.map((p) => p.delay));
+                    const sizePath = info.points
+                      .map((p, idx) => {
+                        const x = pad + (p.time / maxTime) * innerW;
+                        const y = pad + innerH - (p.size / maxSize) * innerH;
+                        return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+                      })
+                      .join(" ");
+                    const delayPath = info.points
+                      .map((p, idx) => {
+                        const x = pad + (p.time / maxTime) * innerW;
+                        const y = pad + innerH - (p.delay / maxDelay) * innerH;
+                        return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+                      })
+                      .join(" ");
+                    const currentX = pad + (Math.min(animTime, simEndTime) / maxTime) * innerW;
+
+                    return (
+                      <div
+                        key={info.csvId}
+                        className={`w-[300px] shrink-0 rounded-xl border bg-stone-50 p-4 dark:bg-stone-900`}
+                        style={{
+                          cursor: "pointer",
+                          borderColor: focusedQueueCsvId === info.csvId ? "rgb(220, 229, 124)" : undefined,
+                        }}
+                        onClick={() => setFocusedQueueCsvId(info.csvId)}
+                      >
+                        <p className="truncate font-mono text-xs text-stone-500 dark:text-stone-400">{info.label}</p>
+                        <div className="mt-2 text-xs text-stone-400">
+                          {info.currentBytes} / {info.capacityBytes} B
+                        </div>
+                        <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
+                          <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
+                          <line x1={pad} y1={pad} x2={pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
+                          {info.points.length > 0 && (
+                            <>
+                              <path d={sizePath} fill="none" stroke="rgb(59, 130, 246)" strokeWidth={1.5} />
+                              <path d={delayPath} fill="none" stroke="rgb(249, 115, 22)" strokeWidth={1.5} />
+                            </>
+                          )}
+                          <line x1={currentX} y1={pad} x2={currentX} y2={height - pad} stroke="rgb(220, 229, 124)" strokeWidth={1} />
+                        </svg>
+                        <div className="mt-2 flex gap-3 text-[11px] text-stone-500 dark:text-stone-400">
+                          <span>blue: queued size (B)</span>
+                          <span>orange: avg wait delay (s)</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
