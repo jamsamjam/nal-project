@@ -30,6 +30,8 @@ type QueueSelectionInfo = {
   label: string;
   currentBytes: number;
   capacityBytes: number;
+  currentPackets: number;
+  capacityPackets: number;
   ratio: number;
   points: { time: number; size: number; delay: number }[]; // size: queued bytes, delay: avg waiting delay(sec)
 };
@@ -42,6 +44,8 @@ type QueueOverlay = {
   markerX: number;
   markerY: number;
 };
+
+const DATA_PACKET_BYTES = 1024;
 
 // 3 -> pod-0-host-1-1
 function numericToSvgId(num: number, k: number): string {
@@ -377,9 +381,10 @@ export default function Home() {
       const parts = csvId.split("-");
       const fromLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[0])))?.label ?? parts[0];
       const toLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[1])))?.label ?? parts[1];
-      const currentBytes = pkts
-        .filter((p) => p.enqueue_time <= animTime && p.dequeue_time >= animTime)
-        .reduce((s, p) => s + p.size, 0);
+      const queuedNow = pkts.filter((p) => p.enqueue_time <= animTime && p.dequeue_time >= animTime);
+      const currentBytes = queuedNow.reduce((s, p) => s + p.size, 0);
+      const currentPackets = queuedNow.length;
+      const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
       const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
       const sampleCount = 180;
       const maxTime = simEndTime > 0 ? simEndTime : 1;
@@ -398,7 +403,16 @@ export default function Home() {
         const avgWaitingDelay = count > 0 ? waitSum / count : 0;
         return { time: t, size: queuedBytes, delay: avgWaitingDelay };
       });
-      return { csvId, label: `${fromLabel} → ${toLabel}`, currentBytes, capacityBytes: queueCapacityBytes, ratio, points };
+      return {
+        csvId,
+        label: `${fromLabel} → ${toLabel}`,
+        currentBytes,
+        capacityBytes: queueCapacityBytes,
+        currentPackets,
+        capacityPackets,
+        ratio,
+        points,
+      };
     });
   }, [selectedQueueCsvIds, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime]);
 
@@ -823,7 +837,7 @@ export default function Home() {
                       >
                         <p className="truncate font-mono text-xs text-stone-500 dark:text-stone-400">{info.label}</p>
                         <div className="mt-2 text-xs text-stone-400">
-                          {info.currentBytes} / {info.capacityBytes} B
+                          {info.currentBytes} / {info.capacityBytes} B ({info.currentPackets}/{info.capacityPackets} pkts)
                         </div>
                         <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
                           <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
