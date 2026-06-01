@@ -597,34 +597,34 @@ export default function Home() {
             <div className="w-fit rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
               <div className="flex items-center justify-between gap-1">
                 <div className="mt-3 flex flex-wrap gap-1 text-xs">
-                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Layers: {appliedConfig.layers}</span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.layers}-layer</span>
                 {appliedConfig.topology.type === "three_layer" && (
-                  <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800"># Pods: {appliedConfig.topology.k}</span>
+                  <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.topology.k} pods</span>
                 )}
                 {appliedConfig.topology.type === "two_layer" && (
                   <>
-                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800"># ToRs: {appliedConfig.topology.torCount}</span>
-                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800"># Agg: {appliedConfig.topology.aggCount}</span>
-                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Servers/ToR: {appliedConfig.topology.serversPerTor}</span>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.topology.torCount} ToRs</span>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.topology.aggCount} Aggs</span>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.topology.serversPerTor} servers/ToR</span>
                   </>
                 )}
                 {appliedConfig.topology.type === "single_tor" && (
-                  <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Servers/ToR: {appliedConfig.topology.serversPerTor}</span>
+                  <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.topology.serversPerTor} servers/ToR</span>
                 )}
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Rate: {appliedConfig.link.rate}</span>
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Delay: {appliedConfig.link.delay}</span>
-                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">TCP: {appliedConfig.queue.congestionAlgo}</span>
-                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Queue: {appliedConfig.queue.queueAlgo}</span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.queue.congestionAlgo}</span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.queue.queueAlgo}</span>
               </div>
                 <button
                   type="button"
                   onClick={() => setWizardOpen(true)}
-                  className="h-10 rounded-xl bg-stone-900 px-4 mr-3 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200"
+                  className="h-9 rounded-xl bg-stone-900 px-4 mr-2 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200"
                 >
                   Configure
                 </button>
                 <button onClick={runSimulation} disabled={loading || Boolean(topology.error)}
-                  className="h-10 rounded-xl bg-stone-900 px-4 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200">
+                  className="h-9 rounded-xl bg-stone-900 px-4 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200">
                   {loading ? "Running..." : "Run"}
                 </button>
               </div>
