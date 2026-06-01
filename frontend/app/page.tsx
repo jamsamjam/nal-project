@@ -83,23 +83,73 @@ function csvIdsForSvgLink(svgFrom: string, svgTo: string, k: number, packets: Re
   return [`${a}-${b}`, `${b}-${a}`].filter(id => id in packets);
 }
 
-function parseQueueCapacityBytes(linkRate: string, linkDelay: string): number {
+function parseLinkRateBps(linkRate: string): number {
   const r = linkRate.trim();
-  let bps = 0;
-  if (r.endsWith("Gbps")) bps = parseFloat(r) * 1e9;
-  else if (r.endsWith("Mbps")) bps = parseFloat(r) * 1e6;
-  else if (r.endsWith("Kbps")) bps = parseFloat(r) * 1e3;
-  else bps = parseFloat(r);
+  if (r.endsWith("Gbps")) return parseFloat(r) * 1e9;
+  if (r.endsWith("Mbps")) return parseFloat(r) * 1e6;
+  if (r.endsWith("Kbps")) return parseFloat(r) * 1e3;
+  return parseFloat(r);
+}
 
+function parseLinkDelaySeconds(linkDelay: string): number {
   const d = linkDelay.trim();
-  let delayS = 0;
-  if (d.endsWith("ms")) delayS = parseFloat(d) * 1e-3;
-  else if (d.endsWith("us")) delayS = parseFloat(d) * 1e-6;
-  else if (d.endsWith("ns")) delayS = parseFloat(d) * 1e-9;
-  else delayS = parseFloat(d);
+  if (d.endsWith("ms")) return parseFloat(d) * 1e-3;
+  if (d.endsWith("us")) return parseFloat(d) * 1e-6;
+  if (d.endsWith("ns")) return parseFloat(d) * 1e-9;
+  return parseFloat(d);
+}
 
-  return Math.max(1, Math.floor(bps * delayS / 8));
-} // TODO
+function computeMaxRttSeconds(topology: RenderTopology, linkDelaySeconds: number): number {
+  if (linkDelaySeconds <= 0 || topology.nodes.length === 0) return 0;
+
+  const idToIndex = new Map<string, number>();
+  topology.nodes.forEach((node, idx) => idToIndex.set(node.id, idx));
+  const adj: number[][] = Array.from({ length: topology.nodes.length }, () => []);
+
+  for (const link of topology.links) {
+    const a = idToIndex.get(link.from);
+    const b = idToIndex.get(link.to);
+    if (a === undefined || b === undefined) continue;
+    adj[a].push(b);
+    adj[b].push(a);
+  }
+
+  const hostIndices = topology.nodes
+    .map((node, idx) => ({ type: node.type, idx }))
+    .filter((v) => v.type === "host")
+    .map((v) => v.idx);
+
+  if (hostIndices.length < 2) return 2 * linkDelaySeconds;
+
+  let maxHops = 1;
+  for (const src of hostIndices) {
+    const dist = new Array<number>(topology.nodes.length).fill(-1);
+    const queue: number[] = [src];
+    dist[src] = 0;
+
+    for (let head = 0; head < queue.length; head++) {
+      const cur = queue[head];
+      for (const nxt of adj[cur]) {
+        if (dist[nxt] !== -1) continue;
+        dist[nxt] = dist[cur] + 1;
+        queue.push(nxt);
+      }
+    }
+
+    for (const dst of hostIndices) {
+      if (dst === src) continue;
+      const hops = dist[dst];
+      if (hops > maxHops) maxHops = hops;
+    }
+  }
+
+  return 2 * maxHops * linkDelaySeconds;
+}
+
+function parseQueueCapacityBytes(linkRate: string, maxRttSeconds: number): number {
+  const bps = parseLinkRateBps(linkRate);
+  return Math.max(1, Math.floor(bps * maxRttSeconds / 8));
+}
 
 function queueColor(ratio: number, fallback: string): string {
   if (ratio > 0.5) return "rgb(72, 66, 229))"
@@ -246,8 +296,12 @@ export default function Home() {
   }, [packets]);
 
   const queueCapacityBytes = useMemo(
-    () => parseQueueCapacityBytes(linkRate, linkDelay),
-    [linkRate, linkDelay]
+    () => {
+      const delayS = parseLinkDelaySeconds(linkDelay);
+      const maxRttSeconds = computeMaxRttSeconds(topology, delayS);
+      return parseQueueCapacityBytes(linkRate, maxRttSeconds);
+    },
+    [linkRate, linkDelay, topology]
   );
 
   // per-frame: packet dots + current queue depths

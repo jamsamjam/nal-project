@@ -18,6 +18,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <queue>
 #include <vector>
 
 using namespace ns3;
@@ -122,6 +123,53 @@ struct FatTreeLink
     uint32_t to;
     std::string id; // "from-to"
 };
+
+static uint32_t
+ComputeMaxHostToHostHops(uint32_t numHosts, uint32_t totalNodes, const std::vector<FatTreeLink>& links)
+{
+    if (numHosts < 2 || totalNodes == 0)
+        return 1;
+
+    std::vector<std::vector<uint32_t>> adj(totalNodes);
+    for (const auto& l : links)
+    {
+        if (l.from >= totalNodes || l.to >= totalNodes)
+            continue;
+        adj[l.from].push_back(l.to);
+        adj[l.to].push_back(l.from);
+    }
+
+    uint32_t maxHops = 1;
+    for (uint32_t src = 0; src < numHosts; ++src)
+    {
+        std::vector<int32_t> dist(totalNodes, -1);
+        std::queue<uint32_t> q;
+        dist[src] = 0;
+        q.push(src);
+
+        while (!q.empty())
+        {
+            uint32_t cur = q.front();
+            q.pop();
+            for (uint32_t nxt : adj[cur])
+            {
+                if (dist[nxt] != -1)
+                    continue;
+                dist[nxt] = dist[cur] + 1;
+                q.push(nxt);
+            }
+        }
+
+        for (uint32_t dst = 0; dst < numHosts; ++dst)
+        {
+            if (dst == src)
+                continue;
+            if (dist[dst] > static_cast<int32_t>(maxHops))
+                maxHops = static_cast<uint32_t>(dist[dst]);
+        }
+    }
+    return maxHops;
+}
 
 struct DcnTopo
 {
@@ -275,12 +323,6 @@ main(int argc, char* argv[])
     cmd.AddValue("queue", "QueueDisc type", queueDiscType);
     cmd.Parse(argc, argv);
 
-    // max amount of data at any given time = data stacked until getting ACK
-    // TODO: bdp = linkRate * RTT, where RTT = 2 * linkDelay globally atm
-    uint64_t bdpBytes = static_cast<uint64_t>(DataRate(linkRate).GetBitRate() * Time(linkDelay).GetSeconds() * 2.0 / 8.0);
-    if (bdpBytes < 1) bdpBytes = 1;
-    std::string queueSizeStr = std::to_string(bdpBytes) + "B";
-
     std::string tcpVariant = tcpType.substr(tcpType.rfind(':') + 1);
     std::string queueVariant = queueDiscType.substr(queueDiscType.rfind(':') + 1);
     std::string runTag = "L" + std::to_string(layers)
@@ -311,6 +353,11 @@ main(int argc, char* argv[])
 
     DcnTopo topo(layers, k, torCount, aggCount, serversPerTor);
     std::vector<FatTreeLink> links = topo.buildLinks();
+    const uint32_t maxHostHops = ComputeMaxHostToHostHops(topo.numHosts, topo.total, links);
+    const double maxRttSeconds = 2.0 * static_cast<double>(maxHostHops) * Time(linkDelay).GetSeconds();
+    uint64_t bdpBytes = static_cast<uint64_t>(DataRate(linkRate).GetBitRate() * maxRttSeconds / 8.0);
+    if (bdpBytes < 1) bdpBytes = 1;
+    std::string queueSizeStr = std::to_string(bdpBytes) + "B";
 
     std::cout << "DCN layers=" << layers
               << " k=" << k
@@ -321,6 +368,9 @@ main(int argc, char* argv[])
               << " topoTor=" << topo.numTor
               << " topoAgg=" << topo.numAgg
               << " core=" << topo.numCore
+              << " maxHostHops=" << maxHostHops
+              << " maxRttSeconds=" << maxRttSeconds
+              << " queueBytes=" << bdpBytes
               << " links=" << links.size() << "\n";
 
     Config::SetDefault("ns3::TcpL4Protocol::SocketType", StringValue(tcpType));
