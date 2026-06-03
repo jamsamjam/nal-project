@@ -124,6 +124,12 @@ struct FatTreeLink
     std::string id; // "from-to"
 };
 
+struct TrafficPair
+{
+    uint32_t src;
+    uint32_t dst;
+};
+
 static uint32_t
 ComputeMaxHostToHostHops(uint32_t numHosts, uint32_t totalNodes, const std::vector<FatTreeLink>& links)
 {
@@ -244,6 +250,28 @@ struct DcnTopo
         return numHosts + numTor + numAgg + group * half + idx;
     }
 
+    std::tuple<uint32_t, uint32_t, uint32_t> hostLocation(uint32_t host) const
+    {
+        if (layers == 3)
+        {
+            uint32_t half = kPods / 2;
+            uint32_t pod = host / (half * half);
+            uint32_t rem = host % (half * half);
+            uint32_t tor = rem / half;
+            uint32_t pos = rem % half;
+            return {pod, tor, pos};
+        }
+
+        if (layers == 2)
+        {
+            uint32_t tor = host / serversPerTor;
+            uint32_t pos = host % serversPerTor;
+            return {0, tor, pos};
+        }
+
+        return {0, 0, host};
+    }
+
     std::vector<FatTreeLink> buildLinks() const
     {
         std::vector<FatTreeLink> links; // array that dynamically changes the size
@@ -295,6 +323,53 @@ struct DcnTopo
         return links;
     }
 };
+
+static std::vector<TrafficPair>
+BuildTrafficPairs(const DcnTopo& topo)
+{
+    std::vector<TrafficPair> pairs;
+    pairs.reserve(topo.numHosts);
+
+    if (topo.numHosts < 2)
+        return pairs;
+
+    if (topo.layers == 3)
+    {
+        uint32_t half = topo.kPods / 2;
+        for (uint32_t src = 0; src < topo.numHosts; ++src)
+        {
+            auto [pod, tor, pos] = topo.hostLocation(src);
+            uint32_t dstPod = (pod + 1) % topo.kPods;
+            uint32_t dstTor = (tor + 1) % half;
+            uint32_t dst = topo.hostId(dstPod, dstTor, pos);
+            if (dst != src)
+                pairs.push_back({src, dst});
+        }
+        return pairs;
+    }
+
+    if (topo.layers == 2 && topo.torCount > 1)
+    {
+        for (uint32_t src = 0; src < topo.numHosts; ++src)
+        {
+            auto [unusedPod, tor, pos] = topo.hostLocation(src);
+            (void)unusedPod;
+            uint32_t dstTor = (tor + 1) % topo.torCount;
+            uint32_t dst = dstTor * topo.serversPerTor + pos;
+            if (dst != src)
+                pairs.push_back({src, dst});
+        }
+        return pairs;
+    }
+
+    for (uint32_t src = 0; src < topo.numHosts; ++src)
+    {
+        uint32_t dst = (src + 1) % topo.numHosts;
+        if (dst != src)
+            pairs.push_back({src, dst});
+    }
+    return pairs;
+}
 
 int
 main(int argc, char* argv[])
@@ -426,17 +501,7 @@ main(int argc, char* argv[])
     for (uint32_t h = 0; h < topo.numHosts; h++)
         hostAddr[h] = nodes.Get(h)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
 
-    // Random permutation traffic: host[i] -> host[perm[i]]
-    Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
-    std::vector<uint32_t> perm(topo.numHosts);
-    std::iota(perm.begin(), perm.end(), 0); // perm[i] = i
-
-    // Fisher-Yates shuffle modern algorithm
-    for (uint32_t i = topo.numHosts - 1; i > 0; i--)
-    { 
-        uint32_t j = static_cast<uint32_t>(rng->GetValue(0.0, static_cast<double>(i + 1)));
-        std::swap(perm[i], perm[j]);
-    }
+    std::vector<TrafficPair> trafficPairs = BuildTrafficPairs(topo);
 
     PacketSinkHelper sinkHelper("ns3::TcpSocketFactory",
         InetSocketAddress(Ipv4Address::GetAny(), basePort));
@@ -447,13 +512,9 @@ main(int argc, char* argv[])
         sink.Stop(Seconds(simTime + 1.0));
     }
 
-    for (uint32_t h = 0; h < topo.numHosts; h++)
+    for (const auto& pair : trafficPairs)
     {
-        uint32_t dst = perm[h];
-        if (dst == h)
-            continue;
-
-        Ipv4Address dstAddr = hostAddr[dst];
+        Ipv4Address dstAddr = hostAddr[pair.dst];
 
         // OnOffHelper: sends at constant rate when on, idle when off
         OnOffHelper onoff("ns3::TcpSocketFactory",
@@ -463,7 +524,7 @@ main(int argc, char* argv[])
         onoff.SetAttribute("OnTime",  StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
         onoff.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
 
-        ApplicationContainer src = onoff.Install(nodes.Get(h));
+        ApplicationContainer src = onoff.Install(nodes.Get(pair.src));
         src.Start(Seconds(0.0));
         src.Stop(Seconds(simTime));
     }
