@@ -338,16 +338,21 @@ export default function Home() {
       const toNode = ids ? nodeMap.get(ids[1]) : null;
       let depth = 0;
 
-      // A -> B: displayed above, A <- B: below
+      // Each directed link gets its own side of the shared physical link.
       let perpX = 0;
       let perpY = 0;
       if (fromNode && toNode) {
         const parts = linkId.split("-");
-        const offsetSign = parseInt(parts[0]) < parseInt(parts[1]) ? 1 : -1;
-        const dx = toNode.x - fromNode.x;
-        const dy = toNode.y - fromNode.y;
+        const fromNum = parseInt(parts[0]);
+        const toNum = parseInt(parts[1]);
+        const isForwardOnCanonicalLink = fromNum < toNum;
+        const canonicalFrom = isForwardOnCanonicalLink ? fromNode : toNode;
+        const canonicalTo = isForwardOnCanonicalLink ? toNode : fromNode;
+        const dx = canonicalTo.x - canonicalFrom.x;
+        const dy = canonicalTo.y - canonicalFrom.y;
         const len = Math.sqrt(dx * dx + dy * dy);
         if (len > 0) {
+          const offsetSign = isForwardOnCanonicalLink ? 1 : -1;
           perpX = (-dy / len) * offsetSign * 5;
           perpY = (dx / len) * offsetSign * 5;
         }
