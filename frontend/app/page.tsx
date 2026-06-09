@@ -924,8 +924,20 @@ export default function Home() {
                         onClick={() => setFocusedQueueCsvId(info.csvId)}
                       >
                         <p className="truncate font-mono text-xs text-stone-500 dark:text-stone-400">{info.label}</p>
-                        <div className="mt-2 text-xs text-stone-400">
-                          {info.currentBytes} / {info.capacityBytes} B ({info.currentPackets}/{info.capacityPackets} pkts)
+                        <div className="mt-2 inline-flex items-baseline gap-x-1 text-xs text-stone-400" style={{ fontVariantNumeric: "tabular-nums" }}>
+                          <span className="text-right" style={{ width: "5ch" }}>
+                            {info.currentBytes}
+                          </span>
+                          <span>/</span>
+                          <span className="text-right" style={{ width: "5ch" }}>
+                            {info.capacityBytes}
+                          </span>
+                          <span>B</span>
+                          <span>(</span>
+                          <span className="text-right" style={{ width: "5ch" }}>
+                            {info.currentPackets}/{info.capacityPackets}
+                          </span>
+                          <span>pkts)</span>
                         </div>
                         <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
                           <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
