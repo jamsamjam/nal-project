@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildFatTree, nodeStroke, type Node } from "@/lib/topology";
-import TopologyWizard, { type TopologyConfig } from "@/components/TopologyWizard";
+import TopologyWizard, {
+  deriveLinkConfig,
+  getBottleneckLinkRate,
+  parseLinkRateBps,
+  type TopologyConfig,
+} from "@/components/TopologyWizard";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -102,14 +107,6 @@ function csvIdsForSvgLink(svgFrom: string, svgTo: string, k: number, packets: Re
   const b = svgIdToNumeric(svgTo, k);
   if (a < 0 || b < 0) return [];
   return [`${a}-${b}`, `${b}-${a}`].filter(id => id in packets);
-}
-
-function parseLinkRateBps(linkRate: string): number {
-  const r = linkRate.trim();
-  if (r.endsWith("Gbps")) return parseFloat(r) * 1e9;
-  if (r.endsWith("Mbps")) return parseFloat(r) * 1e6;
-  if (r.endsWith("Kbps")) return parseFloat(r) * 1e3;
-  return parseFloat(r);
 }
 
 function parseLinkDelaySeconds(linkDelay: string): number {
@@ -226,8 +223,6 @@ function buildTwoLayerTopology(torCount: number, aggCount: number, serversPerTor
 export default function Home() {
   const MAX_SELECTED_QUEUES = 4;
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [linkRate, setLinkRate] = useState("10Mbps");
-  const [linkDelay, setLinkDelay] = useState("1ms");
   const [k, setK] = useState("4");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -264,6 +259,16 @@ export default function Home() {
   const numericK = Number(k);
   const svgHeight = 500;
   const startX = 80;
+  const defaultConfig = useMemo<TopologyConfig>(() => {
+    const topology = { type: "three_layer" as const, k: Number(k) };
+    return {
+      layers: 3,
+      topology,
+      link: deriveLinkConfig(3, topology, "10Mbps", 1, "1ms"),
+      queue: { congestionAlgo: "TcpNewReno", queueAlgo: "FifoQueueDisc" },
+    };
+  }, [k]);
+  const appliedConfig = topologyConfig ?? defaultConfig;
   const topology = useMemo(() => {
     if (!topologyConfig) return buildFatTree(numericK, startX);
     if (topologyConfig.topology.type === "single_tor") {
@@ -320,11 +325,11 @@ export default function Home() {
 
   const queueCapacityBytes = useMemo(
     () => {
-      const delayS = parseLinkDelaySeconds(linkDelay);
+      const delayS = parseLinkDelaySeconds(appliedConfig.link.delay);
       const maxRttSeconds = computeMaxRttSeconds(topology, delayS);
-      return parseQueueCapacityBytes(linkRate, maxRttSeconds);
+      return parseQueueCapacityBytes(getBottleneckLinkRate(appliedConfig), maxRttSeconds);
     },
-    [linkRate, linkDelay, topology]
+    [appliedConfig, topology]
   );
 
   // per-frame: packet dots + current queue depths
@@ -501,10 +506,13 @@ export default function Home() {
             torCount: 2,
             aggCount: 2,
             serversPerTor: 8,
-            linkRate,
-            linkDelay,
-            tcp: "TcpNewReno",
-            queue: "FifoQueueDisc",
+            linkRate: defaultConfig.link.serverToTorRate,
+            serverToTorRate: defaultConfig.link.serverToTorRate,
+            torToAggRate: defaultConfig.link.torToAggRate,
+            aggToCoreRate: defaultConfig.link.aggToCoreRate,
+            linkDelay: defaultConfig.link.delay,
+            tcp: defaultConfig.queue.congestionAlgo,
+            queue: defaultConfig.queue.queueAlgo,
           };
         }
         if (topologyConfig.topology.type === "single_tor") {
@@ -514,7 +522,10 @@ export default function Home() {
             torCount: 1,
             aggCount: 0,
             serversPerTor: topologyConfig.topology.serversPerTor,
-            linkRate: topologyConfig.link.rate,
+            linkRate: topologyConfig.link.serverToTorRate,
+            serverToTorRate: topologyConfig.link.serverToTorRate,
+            torToAggRate: topologyConfig.link.torToAggRate,
+            aggToCoreRate: topologyConfig.link.aggToCoreRate,
             linkDelay: topologyConfig.link.delay,
             tcp: topologyConfig.queue.congestionAlgo,
             queue: topologyConfig.queue.queueAlgo,
@@ -527,7 +538,10 @@ export default function Home() {
             torCount: topologyConfig.topology.torCount,
             aggCount: topologyConfig.topology.aggCount,
             serversPerTor: topologyConfig.topology.serversPerTor,
-            linkRate: topologyConfig.link.rate,
+            linkRate: topologyConfig.link.serverToTorRate,
+            serverToTorRate: topologyConfig.link.serverToTorRate,
+            torToAggRate: topologyConfig.link.torToAggRate,
+            aggToCoreRate: topologyConfig.link.aggToCoreRate,
             linkDelay: topologyConfig.link.delay,
             tcp: topologyConfig.queue.congestionAlgo,
             queue: topologyConfig.queue.queueAlgo,
@@ -539,7 +553,10 @@ export default function Home() {
           torCount: 2,
           aggCount: 2,
           serversPerTor: 8,
-          linkRate: topologyConfig.link.rate,
+          linkRate: topologyConfig.link.serverToTorRate,
+          serverToTorRate: topologyConfig.link.serverToTorRate,
+          torToAggRate: topologyConfig.link.torToAggRate,
+          aggToCoreRate: topologyConfig.link.aggToCoreRate,
           linkDelay: topologyConfig.link.delay,
           tcp: topologyConfig.queue.congestionAlgo,
           queue: topologyConfig.queue.queueAlgo,
@@ -577,23 +594,11 @@ export default function Home() {
 
   function applyWizardConfig(config: TopologyConfig) {
     setTopologyConfig(config);
-    setLinkRate(config.link.rate);
-    setLinkDelay(config.link.delay);
     if (config.topology.type === "three_layer") {
       setK(String(config.topology.k));
     }
     setWizardOpen(false);
   }
-
-  const appliedConfig = useMemo(() => {
-    if (topologyConfig) return topologyConfig;
-    return {
-      layers: 3 as const,
-      topology: { type: "three_layer" as const, k: Number(k) },
-      link: { rate: linkRate, delay: linkDelay },
-      queue: { congestionAlgo: "TcpNewReno", queueAlgo: "FifoQueueDisc" },
-    };
-  }, [topologyConfig, k, linkRate, linkDelay]);
 
   return (
     <>
@@ -630,7 +635,16 @@ export default function Home() {
                 {appliedConfig.topology.type === "single_tor" && (
                   <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.topology.serversPerTor} servers/ToR</span>
                 )}
-                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Rate: {appliedConfig.link.rate}</span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">S-ToR: {appliedConfig.link.serverToTorRate}</span>
+                {appliedConfig.layers >= 2 && (
+                  <>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">ToR OS: {appliedConfig.link.torOversubRatio}:1</span>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">ToR-Agg: {appliedConfig.link.torToAggRate}</span>
+                  </>
+                )}
+                {appliedConfig.layers >= 3 && (
+                  <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Agg-Core: {appliedConfig.link.aggToCoreRate}</span>
+                )}
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Delay: {appliedConfig.link.delay}</span>
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.queue.congestionAlgo}</span>
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.queue.queueAlgo}</span>

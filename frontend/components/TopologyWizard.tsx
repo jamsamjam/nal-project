@@ -4,16 +4,24 @@ import { useMemo, useState } from "react";
 
 export type LayerType = 1 | 2 | 3;
 
+export type TopologyShape =
+  | { type: "single_tor"; torCount: 1; serversPerTor: number }
+  | { type: "two_layer"; torCount: number; aggCount: number; serversPerTor: number }
+  | { type: "three_layer"; k: number };
+
+export type LinkConfig = {
+  serverToTorRate: string;
+  torOversubRatio: number;
+  aggOversubRatio: number;
+  torToAggRate: string;
+  aggToCoreRate: string;
+  delay: string;
+};
+
 export type TopologyConfig = {
   layers: LayerType;
-  topology:
-    | { type: "single_tor"; torCount: 1; serversPerTor: number }
-    | { type: "two_layer"; torCount: number; aggCount: number; serversPerTor: number }
-    | { type: "three_layer"; k: number };
-  link: {
-    rate: string;
-    delay: string;
-  };
+  topology: TopologyShape;
+  link: LinkConfig;
   queue: {
     congestionAlgo: string;
     queueAlgo: string;
@@ -30,6 +38,92 @@ type Step = "layers" | "shape" | "servers" | "link" | "queue";
 const congestionAlgos = ["TcpNewReno", "TcpCubic", "TcpDctcp"];
 const queueAlgos = ["FifoQueueDisc", "RedQueueDisc"];
 
+export function parseLinkRateBps(linkRate: string): number {
+  const r = linkRate.trim();
+  if (r.endsWith("Gbps")) return parseFloat(r) * 1e9;
+  if (r.endsWith("Mbps")) return parseFloat(r) * 1e6;
+  if (r.endsWith("Kbps")) return parseFloat(r) * 1e3;
+  return parseFloat(r);
+}
+
+function formatRateBps(bps: number): string {
+  const units = [
+    { suffix: "Gbps", value: 1e9 },
+    { suffix: "Mbps", value: 1e6 },
+    { suffix: "Kbps", value: 1e3 },
+  ];
+
+  for (const unit of units) {
+    if (bps >= unit.value) {
+      return `${trimDecimal(bps / unit.value)}${unit.suffix}`;
+    }
+  }
+
+  return `${trimDecimal(bps)}bps`;
+}
+
+function trimDecimal(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return value.toFixed(3).replace(/\.?0+$/, "");
+}
+
+function safeRatio(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return value;
+}
+
+export function deriveLinkConfig(layers: LayerType, topology: TopologyShape, serverToTorRate: string, torOversubRatio: number, delay: string): LinkConfig {
+  const serverToTorBps = parseLinkRateBps(serverToTorRate);
+  const safeServerToTorRate = Number.isFinite(serverToTorBps) && serverToTorBps > 0 ? serverToTorRate : "10Gbps";
+  const normalizedServerToTorBps = parseLinkRateBps(safeServerToTorRate);
+  const normalizedTorOversubRatio = safeRatio(torOversubRatio);
+  const aggOversubRatio = 1;
+
+  let torDownlinks = 1;
+  let torUplinks = 1;
+  let aggDownlinks = 1;
+  let aggUplinks = 1;
+
+  if (topology.type === "two_layer") {
+    torDownlinks = Math.max(1, topology.serversPerTor);
+    torUplinks = Math.max(1, topology.aggCount);
+  } else if (topology.type === "three_layer") {
+    const half = Math.max(1, topology.k / 2);
+    torDownlinks = half;
+    torUplinks = half;
+    aggDownlinks = half;
+    aggUplinks = half;
+  }
+
+  const torToAggBps =
+    layers === 1
+      ? normalizedServerToTorBps
+      : (normalizedServerToTorBps * torDownlinks) / (torUplinks * normalizedTorOversubRatio);
+
+  const aggToCoreBps =
+    layers < 3
+      ? torToAggBps
+      : (torToAggBps * aggDownlinks) / (aggUplinks * aggOversubRatio);
+
+  return {
+    serverToTorRate: safeServerToTorRate,
+    torOversubRatio: normalizedTorOversubRatio,
+    aggOversubRatio,
+    torToAggRate: formatRateBps(Math.max(1, torToAggBps)),
+    aggToCoreRate: formatRateBps(Math.max(1, aggToCoreBps)),
+    delay,
+  };
+}
+
+export function getBottleneckLinkRate(config: TopologyConfig): string {
+  const candidates = [config.link.serverToTorRate];
+  if (config.layers >= 2) candidates.push(config.link.torToAggRate);
+  if (config.layers >= 3) candidates.push(config.link.aggToCoreRate);
+
+  const minBps = Math.min(...candidates.map((rate) => parseLinkRateBps(rate)));
+  return formatRateBps(minBps);
+}
+
 export default function TopologyWizard({ onSubmit, onChange }: Props) {
   const [layers, setLayers] = useState<LayerType>(1);
 
@@ -38,7 +132,8 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
   const [k, setK] = useState(4);
 
   const [serversPerTor, setServersPerTor] = useState(8);
-  const [linkRate, setLinkRate] = useState("10Gbps");
+  const [serverToTorRate, setServerToTorRate] = useState("10Gbps");
+  const [torOversubRatio, setTorOversubRatio] = useState(1);
   const [linkDelay, setLinkDelay] = useState("1ms");
 
   const [congestionAlgo, setCongestionAlgo] = useState(congestionAlgos[0]);
@@ -54,21 +149,25 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
 
   const step = steps[stepIndex];
 
-  const config = useMemo<TopologyConfig>(() => {
-    const topology =
-      layers === 1
-        ? { type: "single_tor" as const, torCount: 1 as const, serversPerTor }
-        : layers === 2
-          ? { type: "two_layer" as const, torCount, aggCount, serversPerTor }
-          : { type: "three_layer" as const, k };
+  const topology = useMemo<TopologyShape>(() => {
+    if (layers === 1) return { type: "single_tor", torCount: 1, serversPerTor };
+    if (layers === 2) return { type: "two_layer", torCount, aggCount, serversPerTor };
+    return { type: "three_layer", k };
+  }, [layers, torCount, aggCount, serversPerTor, k]);
 
+  const link = useMemo(
+    () => deriveLinkConfig(layers, topology, serverToTorRate, torOversubRatio, linkDelay),
+    [layers, topology, serverToTorRate, torOversubRatio, linkDelay]
+  );
+
+  const config = useMemo<TopologyConfig>(() => {
     return {
       layers,
       topology,
-      link: { rate: linkRate, delay: linkDelay },
+      link,
       queue: { congestionAlgo, queueAlgo },
     };
-  }, [layers, torCount, aggCount, k, serversPerTor, linkRate, linkDelay, congestionAlgo, queueAlgo]);
+  }, [layers, topology, link, congestionAlgo, queueAlgo]);
 
   function goNext() {
     setStepIndex((prev) => Math.min(prev + 1, steps.length - 1));
@@ -148,9 +247,23 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
 
         {step === "link" && (
           <div className="space-y-3">
-            <p className="text-sm font-semibold">linkrate, delay</p>
-            <TextField label="Link Rate" value={linkRate} onChange={setLinkRate} placeholder="10Gbps" />
+            <p className="text-sm font-semibold">Link Rates / Oversubscription</p>
+            <TextField label="Server-ToR Rate" value={serverToTorRate} onChange={setServerToTorRate} placeholder="10Gbps" />
+            {layers >= 2 && (
+              <NumberField
+                label="ToR Oversub Ratio"
+                value={torOversubRatio}
+                onChange={setTorOversubRatio}
+                min={0.1}
+                step={0.1}
+              />
+            )}
+            {layers === 3 && (
+              <p className="rounded-md bg-stone-100 px-3 py-2 text-xs text-stone-600">Agg oversubscription is fixed to 1:1.</p>
+            )}
             <TextField label="Link Delay" value={linkDelay} onChange={setLinkDelay} placeholder="1ms" />
+            <CalculatedField label="Calculated ToR-Agg Rate" value={link.torToAggRate} />
+            {layers === 3 && <CalculatedField label="Calculated Agg-Core Rate" value={link.aggToCoreRate} />}
           </div>
         )}
 
@@ -243,6 +356,15 @@ function TextField({
   );
 }
 
+function CalculatedField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-stone-300 bg-stone-50 px-3 py-2">
+      <p className="mb-1 text-xs font-medium text-stone-600">{label}</p>
+      <p className="text-sm font-semibold text-stone-900">{value}</p>
+    </div>
+  );
+}
+
 function SelectField({
   label,
   value,
@@ -281,7 +403,7 @@ function labelForStep(step: Step): string {
     case "servers":
       return "Servers";
     case "link":
-      return "Link";
+      return "Links";
     case "queue":
       return "Queue";
     default:
