@@ -41,7 +41,6 @@ struct PacketArrivalInfo
     uint32_t size = 0;
     int64_t enqueueTime = 0;
     int64_t dequeueTime = 0;
-    int64_t arriveTime = 0;
     bool logged = false;
 };
 
@@ -121,7 +120,6 @@ struct FatTreeLink
 {
     uint32_t from;
     uint32_t to;
-    std::string id; // "from-to"
 };
 
 enum class NodeKind
@@ -257,7 +255,7 @@ struct DcnTopo
         std::vector<FatTreeLink> links; // array that dynamically changes the size
 
         auto tor = [&](uint32_t a, uint32_t b) {
-            links.push_back({a, b, std::to_string(a) + "-" + std::to_string(b)});
+            links.push_back({a, b});
         };
 
         if (layers == 3)
@@ -434,6 +432,7 @@ main(int argc, char* argv[])
               << " queueBytes=" << bdpBytes
               << " links=" << links.size() << "\n";
 
+    Config::SetDefault("ns3::Ipv4GlobalRouting::RandomEcmpRouting", BooleanValue(true));
     Config::SetDefault("ns3::TcpL4Protocol::SocketType", StringValue(tcpType));
     Time::SetResolution(Time::NS);
 
