@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from pathlib import Path
 import csv
 import subprocess
-from threading import Lock
+from threading import Lock, Thread
+from typing import Literal
 
 
 class RunRequest(BaseModel):
@@ -23,6 +24,13 @@ class RunRequest(BaseModel):
     queue: str = "FifoQueueDisc"
 
 
+class RunStatus(BaseModel):
+    runTag: str
+    status: Literal["queued", "running", "completed", "failed"]
+    linkIds: list[str] = []
+    error: str | None = None
+
+
 app = FastAPI()
 
 app.add_middleware(
@@ -36,6 +44,8 @@ ns3_path = Path("../ns3").resolve()
 output_path = Path("./output").resolve()
 output_path.mkdir(exist_ok=True)
 _ns3_ready_lock = Lock()
+_run_jobs_lock = Lock()
+_run_jobs: dict[str, RunStatus] = {}
 
 app.mount("/output", StaticFiles(directory=output_path), name="output")
 
@@ -69,6 +79,22 @@ def get_link_ids(run_tag: str) -> list[str]:
     return [f.stem.replace("packets_", "") for f in csv_files]
 
 
+def get_job_status(run_tag: str) -> RunStatus | None:
+    with _run_jobs_lock:
+        status = _run_jobs.get(run_tag)
+        return status.model_copy() if status else None
+
+
+def set_job_status(run_tag: str, status: Literal["queued", "running", "completed", "failed"], link_ids: list[str] | None = None, error: str | None = None):
+    with _run_jobs_lock:
+        _run_jobs[run_tag] = RunStatus(
+            runTag=run_tag,
+            status=status,
+            linkIds=link_ids or [],
+            error=error,
+        )
+
+
 def ensure_ns3_ready():
     with _ns3_ready_lock:
         build_dir = ns3_path / "build"
@@ -82,44 +108,73 @@ def ensure_ns3_ready():
             raise HTTPException(status_code=500, detail=f"ns-3 setup failed: {e}")
 
 
-@app.post("/run")
-def run(req: RunRequest):
-    ensure_ns3_ready()
-
-    run_tag = build_run_tag(req)
+def launch_run(req: RunRequest, run_tag: str):
     run_dir = output_path / run_tag
-
     server_to_tor_rate = req.serverToTorRate or req.linkRate
     tor_to_agg_rate = req.torToAggRate or server_to_tor_rate
     agg_to_core_rate = req.aggToCoreRate or tor_to_agg_rate
 
-    if not run_dir.exists():
-        args = [
-            "./ns3", "run", "scratch/DCN", "--",
-            f"--layers={req.layers}",
-            f"--k={req.k}",
-            f"--torCount={req.torCount}",
-            f"--aggCount={req.aggCount}",
-            f"--serversPerTor={req.serversPerTor}",
-            f"--linkRate={req.linkRate}",
-            f"--serverToTorRate={server_to_tor_rate}",
-            f"--torToAggRate={tor_to_agg_rate}",
-            f"--aggToCoreRate={agg_to_core_rate}",
-            f"--linkDelay={req.linkDelay}",
-            f"--tcp={ns3_type(req.tcp)}",
-            f"--queue={ns3_type(req.queue)}",
-        ]
+    try:
+        set_job_status(run_tag, "running")
+        ensure_ns3_ready()
 
-        try:
+        if not run_dir.exists():
+            args = [
+                "./ns3", "run", "scratch/DCN", "--",
+                f"--layers={req.layers}",
+                f"--k={req.k}",
+                f"--torCount={req.torCount}",
+                f"--aggCount={req.aggCount}",
+                f"--serversPerTor={req.serversPerTor}",
+                f"--linkRate={req.linkRate}",
+                f"--serverToTorRate={server_to_tor_rate}",
+                f"--torToAggRate={tor_to_agg_rate}",
+                f"--aggToCoreRate={agg_to_core_rate}",
+                f"--linkDelay={req.linkDelay}",
+                f"--tcp={ns3_type(req.tcp)}",
+                f"--queue={ns3_type(req.queue)}",
+            ]
             subprocess.run(args, cwd=ns3_path, check=True)
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"ns-3 run failed: {e}")
 
-    link_ids = get_link_ids(run_tag)
-    return {
-        "runTag": run_tag,
-        "linkIds": link_ids,
-    }
+        set_job_status(run_tag, "completed", link_ids=get_link_ids(run_tag))
+    except subprocess.CalledProcessError as e:
+        set_job_status(run_tag, "failed", error=f"ns-3 run failed: {e}")
+    except HTTPException as e:
+        set_job_status(run_tag, "failed", error=str(e.detail))
+    except Exception as e:  # noqa: BLE001
+        set_job_status(run_tag, "failed", error=f"Unexpected error: {e}")
+
+
+@app.post("/run")
+def run(req: RunRequest):
+    run_tag = build_run_tag(req)
+    run_dir = output_path / run_tag
+    existing = get_job_status(run_tag)
+
+    if existing and existing.status in {"queued", "running"}:
+        return existing
+
+    if not run_dir.exists():
+        set_job_status(run_tag, "queued")
+        Thread(target=launch_run, args=(req, run_tag), daemon=True).start()
+        return get_job_status(run_tag)
+
+    return RunStatus(runTag=run_tag, status="completed", linkIds=get_link_ids(run_tag))
+
+
+@app.get("/runs/{run_tag}/status")
+def get_run_status(run_tag: str):
+    status = get_job_status(run_tag)
+    if status and status.status in {"queued", "running", "failed"}:
+        return status
+
+    run_dir = output_path / run_tag
+    if run_dir.exists():
+        return RunStatus(runTag=run_tag, status="completed", linkIds=get_link_ids(run_tag))
+
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_tag}' not found.")
+    return status
 
 
 @app.get("/results/{run_tag}")

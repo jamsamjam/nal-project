@@ -27,6 +27,12 @@ type PacketRow = {
 };
 
 type RunResult = { runTag: string; linkIds: string[] };
+type RunStatus = {
+  runTag: string;
+  status: "queued" | "running" | "completed" | "failed";
+  linkIds: string[];
+  error?: string | null;
+};
 
 type Dot = { key: string; x: number; y: number };
 type RenderTopology = { nodes: Node[]; links: { from: string; to: string }[]; error: string | null };
@@ -49,6 +55,10 @@ type QueueOverlay = {
   markerX: number;
   markerY: number;
 };
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 const DATA_PACKET_BYTES = 1024;
 
@@ -227,6 +237,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
 
   const [packets, setPackets] = useState<Record<string, PacketRow[]>>({});
   const [fetchingPackets, setFetchingPackets] = useState(false);
@@ -485,11 +496,52 @@ export default function Home() {
     }
   }
 
+  async function fetchPacketsForRun(data: RunResult) {
+    setRunResult(data);
+    setFetchingPackets(true);
+    const fetched: Record<string, PacketRow[]> = {};
+    await Promise.all(
+      data.linkIds.map(async (linkId) => {
+        const r = await fetch(`/results/${data.runTag}/link/${linkId}`);
+        if (r.ok) {
+          const d = await r.json();
+          fetched[linkId] = d.packets;
+        }
+      })
+    );
+    setPackets(fetched);
+  }
+
+  async function maybeRequestNotificationPermission() {
+    if (typeof window === "undefined" || !("Notification" in window)) return "denied";
+    if (Notification.permission !== "default") return Notification.permission;
+    return Notification.requestPermission();
+  }
+
+  function notifyRunFinished(status: RunStatus) {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+
+    if (status.status === "completed") {
+      new Notification("ns-3 simulation complete", {
+        body: `${status.runTag} finished and results are ready.`,
+      });
+      return;
+    }
+
+    if (status.status === "failed") {
+      new Notification("ns-3 simulation failed", {
+        body: status.error ?? `${status.runTag} failed.`,
+      });
+    }
+  }
+
   async function runSimulation() {
     // initialize exisiting output
     setLoading(true);
     setError(null);
     setRunResult(null);
+    setRunStatus(null);
     setPackets({});
     setAnimating(false);
     setAnimTime(0);
@@ -569,21 +621,30 @@ export default function Home() {
         body: JSON.stringify(runPayload),
       });
       if (!res.ok) throw new Error(`Backend Error: ${res.status}`);
-      const data: RunResult = await res.json();
-      setRunResult(data);
+      const initialStatus: RunStatus = await res.json();
+      setRunStatus(initialStatus);
 
-      setFetchingPackets(true);
-      const fetched: Record<string, PacketRow[]> = {};
-      await Promise.all(
-        data.linkIds.map(async (linkId) => {
-          const r = await fetch(`/results/${data.runTag}/link/${linkId}`); // TODO
-          if (r.ok) {
-            const d = await r.json();
-            fetched[linkId] = d.packets;
-          }
-        })
-      );
-      setPackets(fetched);
+      void maybeRequestNotificationPermission();
+
+      let latestStatus = initialStatus;
+      while (latestStatus.status === "queued" || latestStatus.status === "running") {
+        await sleep(1500);
+        const statusRes = await fetch(`/runs/${latestStatus.runTag}/status`, { cache: "no-store" });
+        if (!statusRes.ok) throw new Error(`Backend Error: ${statusRes.status}`);
+        latestStatus = await statusRes.json();
+        setRunStatus(latestStatus);
+      }
+
+      notifyRunFinished(latestStatus);
+
+      if (latestStatus.status === "failed") {
+        throw new Error(latestStatus.error ?? "Simulation failed");
+      }
+
+      await fetchPacketsForRun({
+        runTag: latestStatus.runTag,
+        linkIds: latestStatus.linkIds,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -662,6 +723,14 @@ export default function Home() {
                 </button>
               </div>
 
+              {runStatus && (
+                <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">
+                  Status: {runStatus.status}
+                  {runStatus.status !== "completed" ? ` (${runStatus.runTag})` : ""}
+                </p>
+              )}
+              {runResult && <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">Latest run: {runResult.runTag}</p>}
+              {fetchingPackets && <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">Loading simulation results...</p>}
               {topology.error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{topology.error}</p>}
               {error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p>}
             </div>

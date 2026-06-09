@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
         source: "/results/:path*",
         destination: "http://localhost:8001/results/:path*",
       },
+      {
+        source: "/runs/:path*",
+        destination: "http://localhost:8001/runs/:path*",
+      },
     ];
   },
 };
