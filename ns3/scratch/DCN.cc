@@ -124,6 +124,14 @@ struct FatTreeLink
     std::string id; // "from-to"
 };
 
+enum class NodeKind
+{
+    Host,
+    Tor,
+    Agg,
+    Core
+};
+
 static uint32_t
 ComputeMaxHostToHostHops(uint32_t numHosts, uint32_t totalNodes, const std::vector<FatTreeLink>& links)
 {
@@ -294,7 +302,40 @@ struct DcnTopo
 
         return links;
     }
+
+    NodeKind nodeKind(uint32_t nodeId) const
+    {
+        if (nodeId < numHosts)
+            return NodeKind::Host;
+        if (nodeId < numHosts + numTor)
+            return NodeKind::Tor;
+        if (nodeId < numHosts + numTor + numAgg)
+            return NodeKind::Agg;
+        return NodeKind::Core;
+    }
 };
+
+static std::string
+RateForLink(const DcnTopo& topo,
+            const FatTreeLink& link,
+            const std::string& serverToTorRate,
+            const std::string& torToAggRate,
+            const std::string& aggToCoreRate)
+{
+    const NodeKind from = topo.nodeKind(link.from);
+    const NodeKind to = topo.nodeKind(link.to);
+
+    if ((from == NodeKind::Host && to == NodeKind::Tor) || (from == NodeKind::Tor && to == NodeKind::Host))
+        return serverToTorRate;
+
+    if ((from == NodeKind::Tor && to == NodeKind::Agg) || (from == NodeKind::Agg && to == NodeKind::Tor))
+        return torToAggRate;
+
+    if ((from == NodeKind::Agg && to == NodeKind::Core) || (from == NodeKind::Core && to == NodeKind::Agg))
+        return aggToCoreRate;
+
+    return serverToTorRate;
+}
 
 int
 main(int argc, char* argv[])
@@ -306,6 +347,9 @@ main(int argc, char* argv[])
     uint32_t serversPerTor = 8;
     std::string csvBase = "../backend/output";
     std::string linkRate = "10Mbps";
+    std::string serverToTorRate = "10Mbps";
+    std::string torToAggRate = "10Mbps";
+    std::string aggToCoreRate = "10Mbps";
     std::string linkDelay = "1ms";
     std::string tcpType = "ns3::TcpNewReno";
     std::string queueDiscType = "ns3::FifoQueueDisc";
@@ -318,6 +362,9 @@ main(int argc, char* argv[])
     cmd.AddValue("aggCount", "Number of Aggregation switches for 2-layer topology", aggCount);
     cmd.AddValue("serversPerTor", "Servers per ToR for 1/2-layer topology", serversPerTor);
     cmd.AddValue("linkRate", "Link data rate", linkRate);
+    cmd.AddValue("serverToTorRate", "Host-to-ToR link data rate", serverToTorRate);
+    cmd.AddValue("torToAggRate", "ToR-to-Aggregation link data rate", torToAggRate);
+    cmd.AddValue("aggToCoreRate", "Aggregation-to-Core link data rate", aggToCoreRate);
     cmd.AddValue("linkDelay", "Link propagation delay", linkDelay);
     cmd.AddValue("tcp", "TCP variant", tcpType);
     cmd.AddValue("queue", "QueueDisc type", queueDiscType);
@@ -325,13 +372,21 @@ main(int argc, char* argv[])
 
     std::string tcpVariant = tcpType.substr(tcpType.rfind(':') + 1);
     std::string queueVariant = queueDiscType.substr(queueDiscType.rfind(':') + 1);
+    if (serverToTorRate.empty())
+        serverToTorRate = linkRate;
+    if (torToAggRate.empty())
+        torToAggRate = serverToTorRate;
+    if (aggToCoreRate.empty())
+        aggToCoreRate = torToAggRate;
     std::string runTag = "L" + std::to_string(layers)
         + "_k" + std::to_string(k)
         + "_t" + std::to_string(torCount)
         + "_a" + std::to_string(aggCount)
         + "_s" + std::to_string(serversPerTor)
         + "_d" + linkDelay
-        + "_r" + linkRate
+        + "_rsta" + serverToTorRate
+        + "_rta" + torToAggRate
+        + "_rac" + aggToCoreRate
         + "_tcp" + tcpVariant
         + "_q" + queueVariant;
     
@@ -355,7 +410,10 @@ main(int argc, char* argv[])
     std::vector<FatTreeLink> links = topo.buildLinks();
     const uint32_t maxHostHops = ComputeMaxHostToHostHops(topo.numHosts, topo.total, links);
     const double maxRttSeconds = 2.0 * static_cast<double>(maxHostHops) * Time(linkDelay).GetSeconds();
-    uint64_t bdpBytes = static_cast<uint64_t>(DataRate(linkRate).GetBitRate() * maxRttSeconds / 8.0);
+    const uint64_t bottleneckBps = std::min({DataRate(serverToTorRate).GetBitRate(),
+                                             DataRate(torToAggRate).GetBitRate(),
+                                             DataRate(aggToCoreRate).GetBitRate()});
+    uint64_t bdpBytes = static_cast<uint64_t>(bottleneckBps * maxRttSeconds / 8.0);
     if (bdpBytes < 1) bdpBytes = 1;
     std::string queueSizeStr = std::to_string(bdpBytes) + "B";
 
@@ -368,6 +426,9 @@ main(int argc, char* argv[])
               << " topoTor=" << topo.numTor
               << " topoAgg=" << topo.numAgg
               << " core=" << topo.numCore
+              << " serverToTorRate=" << serverToTorRate
+              << " torToAggRate=" << torToAggRate
+              << " aggToCoreRate=" << aggToCoreRate
               << " maxHostHops=" << maxHostHops
               << " maxRttSeconds=" << maxRttSeconds
               << " queueBytes=" << bdpBytes
@@ -404,7 +465,12 @@ main(int argc, char* argv[])
         PointToPointHelper p2p;
         // set NIC capacity to 1p so we can observe qdisc only
         p2p.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue("1p"));
-        p2p.SetDeviceAttribute("DataRate", StringValue(linkRate));
+        p2p.SetDeviceAttribute("DataRate",
+                               StringValue(RateForLink(topo,
+                                                       link,
+                                                       serverToTorRate,
+                                                       torToAggRate,
+                                                       aggToCoreRate)));
         p2p.SetChannelAttribute("Delay", StringValue(linkDelay));
 
         NetDeviceContainer devices = p2p.Install(pair);
@@ -459,7 +525,7 @@ main(int argc, char* argv[])
         OnOffHelper onoff("ns3::TcpSocketFactory",
             InetSocketAddress(dstAddr, basePort));
 
-        onoff.SetConstantRate(DataRate(linkRate), 1024);
+        onoff.SetConstantRate(DataRate(serverToTorRate), 1024);
         onoff.SetAttribute("OnTime",  StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
         onoff.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
 

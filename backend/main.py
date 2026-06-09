@@ -15,6 +15,9 @@ class RunRequest(BaseModel):
     aggCount: int = 2
     serversPerTor: int = 8
     linkRate: str = "10Mbps"
+    serverToTorRate: str | None = None
+    torToAggRate: str | None = None
+    aggToCoreRate: str | None = None
     linkDelay: str = "1ms"
     tcp: str = "TcpNewReno"
     queue: str = "FifoQueueDisc"
@@ -40,9 +43,16 @@ app.mount("/output", StaticFiles(directory=output_path), name="output")
 def build_run_tag(req: RunRequest) -> str:
     tcp_variant = req.tcp.split("::")[-1]
     queue_variant = req.queue.split("::")[-1]
+    server_to_tor_rate = req.serverToTorRate or req.linkRate
+    tor_to_agg_rate = req.torToAggRate or server_to_tor_rate
+    agg_to_core_rate = req.aggToCoreRate or tor_to_agg_rate
     return (
         f"L{req.layers}_k{req.k}_t{req.torCount}_a{req.aggCount}_s{req.serversPerTor}"
-        f"_d{req.linkDelay}_r{req.linkRate}_tcp{tcp_variant}_q{queue_variant}"
+        f"_d{req.linkDelay}"
+        f"_rsta{server_to_tor_rate}"
+        f"_rta{tor_to_agg_rate}"
+        f"_rac{agg_to_core_rate}"
+        f"_tcp{tcp_variant}_q{queue_variant}"
     )
 
 
@@ -79,6 +89,10 @@ def run(req: RunRequest):
     run_tag = build_run_tag(req)
     run_dir = output_path / run_tag
 
+    server_to_tor_rate = req.serverToTorRate or req.linkRate
+    tor_to_agg_rate = req.torToAggRate or server_to_tor_rate
+    agg_to_core_rate = req.aggToCoreRate or tor_to_agg_rate
+
     if not run_dir.exists():
         args = [
             "./ns3", "run", "scratch/DCN", "--",
@@ -88,6 +102,9 @@ def run(req: RunRequest):
             f"--aggCount={req.aggCount}",
             f"--serversPerTor={req.serversPerTor}",
             f"--linkRate={req.linkRate}",
+            f"--serverToTorRate={server_to_tor_rate}",
+            f"--torToAggRate={tor_to_agg_rate}",
+            f"--aggToCoreRate={agg_to_core_rate}",
             f"--linkDelay={req.linkDelay}",
             f"--tcp={ns3_type(req.tcp)}",
             f"--queue={ns3_type(req.queue)}",
