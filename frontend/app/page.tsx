@@ -112,9 +112,14 @@ function svgIdToNumeric(svgId: string, k: number): number {
   return -1;
 }
 
-function csvIdsForSvgLink(svgFrom: string, svgTo: string, k: number, packets: Record<string, PacketRow[]>): string[] {
-  const a = svgIdToNumeric(svgFrom, k);
-  const b = svgIdToNumeric(svgTo, k);
+function csvIdsForSvgLink(
+  svgFrom: string,
+  svgTo: string,
+  resolveSvgNodeId: (svgId: string) => number,
+  packets: Record<string, PacketRow[]>
+): string[] {
+  const a = resolveSvgNodeId(svgFrom);
+  const b = resolveSvgNodeId(svgTo);
   if (a < 0 || b < 0) return [];
   return [`${a}-${b}`, `${b}-${a}`].filter(id => id in packets);
 }
@@ -326,6 +331,36 @@ export default function Home() {
         return `agg-${num - hosts - t}`;
       }
       return numericToSvgId(num, numericK);
+    };
+  }, [topologyConfig, numericK]);
+  const resolveSvgNodeId = useMemo(() => {
+    return (svgId: string) => {
+      if (topologyConfig?.topology.type === "single_tor") {
+        const host = svgId.match(/^host-0-(\d+)$/);
+        if (host) return Number(host[1]);
+        if (svgId === "tor-0") return topologyConfig.topology.serversPerTor;
+        return -1;
+      }
+      if (topologyConfig?.topology.type === "two_layer") {
+        const host = svgId.match(/^host-(\d+)-(\d+)$/);
+        if (host) {
+          return Number(host[1]) * topologyConfig.topology.serversPerTor + Number(host[2]);
+        }
+        const tor = svgId.match(/^tor-(\d+)$/);
+        if (tor) {
+          return topologyConfig.topology.torCount * topologyConfig.topology.serversPerTor + Number(tor[1]);
+        }
+        const agg = svgId.match(/^agg-(\d+)$/);
+        if (agg) {
+          return (
+            topologyConfig.topology.torCount * topologyConfig.topology.serversPerTor +
+            topologyConfig.topology.torCount +
+            Number(agg[1])
+          );
+        }
+        return -1;
+      }
+      return svgIdToNumeric(svgId, numericK);
     };
   }, [topologyConfig, numericK]);
 
@@ -791,7 +826,7 @@ export default function Home() {
                   const to = nodeMap.get(link.to);
                   if (!from || !to) return null;
 
-                  const csvIds = csvIdsForSvgLink(link.from, link.to, numericK, packets);
+                  const csvIds = csvIdsForSvgLink(link.from, link.to, resolveSvgNodeId, packets);
                   const depth = csvIds.reduce((s, id) => s + (linkQueueDepths[id] ?? 0), 0);
                   const capacityBytes = csvIds.length * queueCapacityBytes;
                   const ratio = hasPackets && capacityBytes > 0 ? depth / capacityBytes : 0;
@@ -844,12 +879,12 @@ export default function Home() {
                 {selectedNodeId && (() => {
                   const fromNode = nodeMap.get(selectedNodeId);
                   if (!fromNode) return null;
-                  const fromNumeric = svgIdToNumeric(selectedNodeId, numericK);
+                  const fromNumeric = resolveSvgNodeId(selectedNodeId);
                   const neighbors = topology.links
                     .filter(l => l.from === selectedNodeId || l.to === selectedNodeId)
                     .map(l => l.from === selectedNodeId ? l.to : l.from);
                   return neighbors.map(neighborSvgId => {
-                    const toNumeric = svgIdToNumeric(neighborSvgId, numericK);
+                    const toNumeric = resolveSvgNodeId(neighborSvgId);
                     const csvId = `${fromNumeric}-${toNumeric}`;
                     const toNode = nodeMap.get(neighborSvgId);
                     if (!toNode) return null;
