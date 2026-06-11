@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <iostream>
 #include <numeric>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -22,6 +23,14 @@
 #include <vector>
 
 using namespace ns3;
+
+static std::string
+FormatCompactDouble(double value)
+{
+    std::ostringstream oss;
+    oss << value;
+    return oss.str();
+}
 
 NS_LOG_COMPONENT_DEFINE("FatTreeTopology");
 
@@ -351,6 +360,8 @@ main(int argc, char* argv[])
     std::string linkDelay = "1ms";
     std::string tcpType = "ns3::TcpNewReno";
     std::string queueDiscType = "ns3::FifoQueueDisc";
+    double redMinThresholdPct = 20.0;
+    double redMaxThresholdPct = 60.0;
     const double simTime = 10.0;
 
     CommandLine cmd(__FILE__);
@@ -366,6 +377,8 @@ main(int argc, char* argv[])
     cmd.AddValue("linkDelay", "Link propagation delay", linkDelay);
     cmd.AddValue("tcp", "TCP variant", tcpType);
     cmd.AddValue("queue", "QueueDisc type", queueDiscType);
+    cmd.AddValue("redMinThresholdPct", "RED minimum threshold as a percent of queue capacity", redMinThresholdPct);
+    cmd.AddValue("redMaxThresholdPct", "RED maximum threshold as a percent of queue capacity", redMaxThresholdPct);
     cmd.Parse(argc, argv);
 
     std::string tcpVariant = tcpType.substr(tcpType.rfind(':') + 1);
@@ -386,7 +399,9 @@ main(int argc, char* argv[])
         + "_rta" + torToAggRate
         + "_rac" + aggToCoreRate
         + "_tcp" + tcpVariant
-        + "_q" + queueVariant;
+        + "_q" + queueVariant
+        + "_redmin" + FormatCompactDouble(redMinThresholdPct)
+        + "_redmax" + FormatCompactDouble(redMaxThresholdPct);
     
     for (auto& c : runTag) if (c == '/' || c == ' ') c = '_';
     std::string csvDir = csvBase + "/" + runTag;
@@ -414,6 +429,19 @@ main(int argc, char* argv[])
     uint64_t bdpBytes = static_cast<uint64_t>(bottleneckBps * maxRttSeconds / 8.0);
     if (bdpBytes < 1) bdpBytes = 1;
     std::string queueSizeStr = std::to_string(bdpBytes) + "B";
+    redMinThresholdPct = std::clamp(redMinThresholdPct, 0.0, 100.0);
+    redMaxThresholdPct = std::clamp(redMaxThresholdPct, 0.0, 100.0);
+
+    if (redMaxThresholdPct < redMinThresholdPct)
+    {
+        std::swap(redMinThresholdPct, redMaxThresholdPct);
+    }
+
+    const double redMinThresholdBytes = static_cast<double>(bdpBytes) * redMinThresholdPct / 100.0;
+    const double redMaxThresholdBytes = static_cast<double>(bdpBytes) * redMaxThresholdPct / 100.0;
+    const bool useRedQueue = (queueDiscType == "ns3::RedQueueDisc");
+    const std::string actualQueueDiscType = queueDiscType;
+    const bool useEcn = useRedQueue || (tcpVariant == "TcpDctcp");
 
     std::cout << "DCN layers=" << layers
               << " k=" << k
@@ -430,10 +458,17 @@ main(int argc, char* argv[])
               << " maxHostHops=" << maxHostHops
               << " maxRttSeconds=" << maxRttSeconds
               << " queueBytes=" << bdpBytes
+              << " redMinThresholdPct=" << redMinThresholdPct
+              << " redMaxThresholdPct=" << redMaxThresholdPct
+              << " queueDiscImpl=" << actualQueueDiscType
               << " links=" << links.size() << "\n";
 
     Config::SetDefault("ns3::Ipv4GlobalRouting::RandomEcmpRouting", BooleanValue(true));
     Config::SetDefault("ns3::TcpL4Protocol::SocketType", StringValue(tcpType));
+    if (useEcn)
+    {
+        Config::SetDefault("ns3::TcpSocketBase::UseEcn", StringValue("On"));
+    }
     Time::SetResolution(Time::NS);
 
     NodeContainer nodes;
@@ -443,7 +478,30 @@ main(int argc, char* argv[])
     stack.Install(nodes);
 
     TrafficControlHelper tch;
-    tch.SetRootQueueDisc(queueDiscType, "MaxSize", StringValue(queueSizeStr)); // TODO
+    if (useRedQueue)
+    {
+        tch.SetRootQueueDisc(actualQueueDiscType,
+                             "MaxSize",
+                             StringValue(queueSizeStr),
+                             "MinTh",
+                             DoubleValue(redMinThresholdBytes),
+                             "MaxTh",
+                             DoubleValue(redMaxThresholdBytes),
+                             "UseEcn",
+                             BooleanValue(true),
+                             "UseHardDrop",
+                             BooleanValue(false),
+                             "LinkBandwidth",
+                             DataRateValue(DataRate(bottleneckBps)),
+                             "LinkDelay",
+                             TimeValue(Time(linkDelay)),
+                             "MeanPktSize",
+                             UintegerValue(1024));
+    }
+    else
+    {
+        tch.SetRootQueueDisc(actualQueueDiscType, "MaxSize", StringValue(queueSizeStr));
+    }
 
     struct LinkQdisc {
         uint32_t from, to;

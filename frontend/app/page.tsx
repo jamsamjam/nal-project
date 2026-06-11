@@ -276,7 +276,12 @@ export default function Home() {
       layers: 3,
       topology,
       link: deriveLinkConfig(3, topology, "10Mbps", 1, "1ms"),
-      queue: { congestionAlgo: "TcpNewReno", queueAlgo: "FifoQueueDisc" },
+      queue: {
+        congestionAlgo: "TcpNewReno",
+        queueAlgo: "FifoQueueDisc",
+        redMinThresholdPct: 20,
+        redMaxThresholdPct: 60,
+      },
     };
   }, [k]);
   const appliedConfig = topologyConfig ?? defaultConfig;
@@ -565,6 +570,8 @@ export default function Home() {
             linkDelay: defaultConfig.link.delay,
             tcp: defaultConfig.queue.congestionAlgo,
             queue: defaultConfig.queue.queueAlgo,
+            redMinThresholdPct: defaultConfig.queue.redMinThresholdPct,
+            redMaxThresholdPct: defaultConfig.queue.redMaxThresholdPct,
           };
         }
         if (topologyConfig.topology.type === "single_tor") {
@@ -581,6 +588,8 @@ export default function Home() {
             linkDelay: topologyConfig.link.delay,
             tcp: topologyConfig.queue.congestionAlgo,
             queue: topologyConfig.queue.queueAlgo,
+            redMinThresholdPct: topologyConfig.queue.redMinThresholdPct,
+            redMaxThresholdPct: topologyConfig.queue.redMaxThresholdPct,
           };
         }
         if (topologyConfig.topology.type === "two_layer") {
@@ -597,6 +606,8 @@ export default function Home() {
             linkDelay: topologyConfig.link.delay,
             tcp: topologyConfig.queue.congestionAlgo,
             queue: topologyConfig.queue.queueAlgo,
+            redMinThresholdPct: topologyConfig.queue.redMinThresholdPct,
+            redMaxThresholdPct: topologyConfig.queue.redMaxThresholdPct,
           };
         }
         return {
@@ -612,6 +623,8 @@ export default function Home() {
           linkDelay: topologyConfig.link.delay,
           tcp: topologyConfig.queue.congestionAlgo,
           queue: topologyConfig.queue.queueAlgo,
+          redMinThresholdPct: topologyConfig.queue.redMinThresholdPct,
+          redMaxThresholdPct: topologyConfig.queue.redMaxThresholdPct,
         };
       })();
 
@@ -709,6 +722,16 @@ export default function Home() {
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">Delay: {appliedConfig.link.delay}</span>
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.queue.congestionAlgo}</span>
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">{appliedConfig.queue.queueAlgo}</span>
+                {appliedConfig.queue.queueAlgo === "RedQueueDisc" && (
+                  <>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">
+                      RED min: {appliedConfig.queue.redMinThresholdPct}%
+                    </span>
+                    <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">
+                      RED max: {appliedConfig.queue.redMaxThresholdPct}%
+                    </span>
+                  </>
+                )}
               </div>
                 <button
                   type="button"

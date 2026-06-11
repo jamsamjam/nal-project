@@ -25,6 +25,8 @@ export type TopologyConfig = {
   queue: {
     congestionAlgo: string;
     queueAlgo: string;
+    redMinThresholdPct: number;
+    redMaxThresholdPct: number;
   };
 };
 
@@ -138,6 +140,8 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
 
   const [congestionAlgo, setCongestionAlgo] = useState(congestionAlgos[0]);
   const [queueAlgo, setQueueAlgo] = useState(queueAlgos[0]);
+  const [redMinThresholdPct, setRedMinThresholdPct] = useState(20);
+  const [redMaxThresholdPct, setRedMaxThresholdPct] = useState(60);
 
   const [stepIndex, setStepIndex] = useState(0);
 
@@ -161,13 +165,21 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
   );
 
   const config = useMemo<TopologyConfig>(() => {
+    const usesDctcpThreshold = queueAlgo === "RedQueueDisc" && congestionAlgo === "TcpDctcp";
+    const effectiveRedMaxThresholdPct = usesDctcpThreshold ? redMinThresholdPct : redMaxThresholdPct;
+
     return {
       layers,
       topology,
       link,
-      queue: { congestionAlgo, queueAlgo },
+      queue: {
+        congestionAlgo,
+        queueAlgo,
+        redMinThresholdPct,
+        redMaxThresholdPct: effectiveRedMaxThresholdPct,
+      },
     };
-  }, [layers, topology, link, congestionAlgo, queueAlgo]);
+  }, [layers, topology, link, congestionAlgo, queueAlgo, redMinThresholdPct, redMaxThresholdPct]);
 
   function goNext() {
     setStepIndex((prev) => Math.min(prev + 1, steps.length - 1));
@@ -272,6 +284,48 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
             <p className="text-sm font-semibold">congestion / queue algo</p>
             <SelectField label="Congestion Algo" value={congestionAlgo} options={congestionAlgos} onChange={setCongestionAlgo} />
             <SelectField label="Queue Algo" value={queueAlgo} options={queueAlgos} onChange={setQueueAlgo} />
+            {queueAlgo === "RedQueueDisc" && (
+              <>
+                {congestionAlgo === "TcpDctcp" ? (
+                  <>
+                    <NumberField
+                      label="RED Threshold"
+                      value={redMinThresholdPct}
+                      onChange={(value) => {
+                        const next = clampPercent(value);
+                        setRedMinThresholdPct(next);
+                        setRedMaxThresholdPct(next);
+                      }}
+                      min={0}
+                      step={1}
+                    />
+                    <p className="rounded-md bg-stone-100 px-3 py-2 text-xs text-stone-600">
+                      DCTCP uses a single RED threshold.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <NumberField
+                      label="RED Min Threshold"
+                      value={redMinThresholdPct}
+                      onChange={(value) => setRedMinThresholdPct(clampPercent(value))}
+                      min={0}
+                      step={1}
+                    />
+                    <NumberField
+                      label="RED Max Threshold"
+                      value={redMaxThresholdPct}
+                      onChange={(value) => setRedMaxThresholdPct(clampPercent(value))}
+                      min={0}
+                      step={1}
+                    />
+                    <p className="rounded-md bg-stone-100 px-3 py-2 text-xs text-stone-600">
+                      Thresholds are entered as percentages of the computed queue capacity.
+                    </p>
+                  </>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -415,4 +469,9 @@ function descriptionForLayer(layer: LayerType): string {
   if (layer === 1) return "1 ToR";
   if (layer === 2) return "ToR + Aggregation";
   return "ToR + Aggregation + Core";
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
 }

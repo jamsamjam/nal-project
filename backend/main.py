@@ -22,6 +22,8 @@ class RunRequest(BaseModel):
     linkDelay: str = "1ms"
     tcp: str = "TcpNewReno"
     queue: str = "FifoQueueDisc"
+    redMinThresholdPct: float = 20.0
+    redMaxThresholdPct: float = 60.0
 
 
 class RunStatus(BaseModel):
@@ -63,6 +65,7 @@ def build_run_tag(req: RunRequest) -> str:
         f"_rta{tor_to_agg_rate}"
         f"_rac{agg_to_core_rate}"
         f"_tcp{tcp_variant}_q{queue_variant}"
+        f"_redmin{req.redMinThresholdPct:g}_redmax{req.redMaxThresholdPct:g}"
     )
 
 
@@ -133,6 +136,8 @@ def launch_run(req: RunRequest, run_tag: str):
                 f"--linkDelay={req.linkDelay}",
                 f"--tcp={ns3_type(req.tcp)}",
                 f"--queue={ns3_type(req.queue)}",
+                f"--redMinThresholdPct={req.redMinThresholdPct}",
+                f"--redMaxThresholdPct={req.redMaxThresholdPct}",
             ]
             subprocess.run(args, cwd=ns3_path, check=True)
 
