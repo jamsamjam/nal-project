@@ -399,9 +399,13 @@ main(int argc, char* argv[])
         + "_rta" + torToAggRate
         + "_rac" + aggToCoreRate
         + "_tcp" + tcpVariant
-        + "_q" + queueVariant
-        + "_redmin" + FormatCompactDouble(redMinThresholdPct)
-        + "_redmax" + FormatCompactDouble(redMaxThresholdPct);
+        + "_q" + queueVariant;
+
+    if (queueVariant == "RedQueueDisc")
+    {
+        runTag += "_redmin" + FormatCompactDouble(redMinThresholdPct)
+            + "_redmax" + FormatCompactDouble(redMaxThresholdPct);
+    }
     
     for (auto& c : runTag) if (c == '/' || c == ' ') c = '_';
     std::string csvDir = csvBase + "/" + runTag;

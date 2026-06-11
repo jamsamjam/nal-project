@@ -58,15 +58,17 @@ def build_run_tag(req: RunRequest) -> str:
     server_to_tor_rate = req.serverToTorRate or req.linkRate
     tor_to_agg_rate = req.torToAggRate or server_to_tor_rate
     agg_to_core_rate = req.aggToCoreRate or tor_to_agg_rate
-    return (
+    run_tag = (
         f"L{req.layers}_k{req.k}_t{req.torCount}_a{req.aggCount}_s{req.serversPerTor}"
         f"_d{req.linkDelay}"
         f"_rsta{server_to_tor_rate}"
         f"_rta{tor_to_agg_rate}"
         f"_rac{agg_to_core_rate}"
         f"_tcp{tcp_variant}_q{queue_variant}"
-        f"_redmin{req.redMinThresholdPct:g}_redmax{req.redMaxThresholdPct:g}"
     )
+    if queue_variant == "RedQueueDisc":
+        run_tag += f"_redmin{req.redMinThresholdPct:g}_redmax{req.redMaxThresholdPct:g}"
+    return run_tag
 
 
 def ns3_type(name: str) -> str:
