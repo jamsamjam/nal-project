@@ -484,6 +484,7 @@ main(int argc, char* argv[])
     TrafficControlHelper tch;
     if (useRedQueue)
     {
+        // ns3/src/traffic-control/model/red-queue-disc.cc
         tch.SetRootQueueDisc(actualQueueDiscType,
                              "MaxSize",
                              StringValue(queueSizeStr),
