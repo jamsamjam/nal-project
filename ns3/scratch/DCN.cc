@@ -536,6 +536,16 @@ main(int argc, char* argv[])
         p2p.SetChannelAttribute("Delay", StringValue(linkDelay));
 
         NetDeviceContainer devices = p2p.Install(pair);
+        if (topo.nodeKind(link.from) == NodeKind::Host)
+        {
+            devices.Get(0)->GetObject<PointToPointNetDevice>()->SetQueue(
+                CreateObject<DropTailQueue<Packet>>());
+        }
+        if (topo.nodeKind(link.to) == NodeKind::Host)
+        {
+            devices.Get(1)->GetObject<PointToPointNetDevice>()->SetQueue(
+                CreateObject<DropTailQueue<Packet>>());
+        }
         QueueDiscContainer qdiscs = tch.Install(devices);
         qdiscsByLink.push_back({link.from, link.to, qdiscs.Get(0), devices.Get(0), devices.Get(1)});
         qdiscsByLink.push_back({link.to, link.from, qdiscs.Get(1), devices.Get(1), devices.Get(0)});
