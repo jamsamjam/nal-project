@@ -39,6 +39,7 @@ type RenderTopology = { nodes: Node[]; links: { from: string; to: string }[]; er
 type QueueSelectionInfo = {
   csvId: string;
   label: string;
+  startTime: number;
   currentBytes: number;
   capacityBytes: number;
   currentPackets: number;
@@ -264,6 +265,7 @@ export default function Home() {
   const [animating, setAnimating] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedQueueCsvIds, setSelectedQueueCsvIds] = useState<string[]>([]);
+  const [selectedQueueStartTimes, setSelectedQueueStartTimes] = useState<Record<string, number>>({});
   const [focusedQueueCsvId, setFocusedQueueCsvId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [topologyConfig, setTopologyConfig] = useState<TopologyConfig | null>(null);
@@ -455,6 +457,7 @@ export default function Home() {
       const parts = csvId.split("-");
       const fromLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[0])))?.label ?? parts[0];
       const toLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[1])))?.label ?? parts[1];
+      const startTime = selectedQueueStartTimes[csvId] ?? 0;
       const queuedNow = pkts.filter((p) => p.enqueue_time <= animTime && p.dequeue_time >= animTime);
       const currentBytes = queuedNow.reduce((s, p) => s + p.size, 0);
       const currentPackets = queuedNow.length;
@@ -480,6 +483,7 @@ export default function Home() {
       return {
         csvId,
         label: `${fromLabel} → ${toLabel}`,
+        startTime,
         currentBytes,
         capacityBytes: queueCapacityBytes,
         currentPackets,
@@ -488,7 +492,7 @@ export default function Home() {
         points,
       };
     });
-  }, [selectedQueueCsvIds, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime]);
+  }, [selectedQueueCsvIds, selectedQueueStartTimes, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime]);
 
   const selectedQueueOverlays = useMemo<QueueOverlay[]>(() => {
     const overlays: QueueOverlay[] = [];
@@ -595,6 +599,7 @@ export default function Home() {
     setAnimTime(0);
     setSelectedNodeId(null);
     setSelectedQueueCsvIds([]);
+    setSelectedQueueStartTimes({});
     setFocusedQueueCsvId(null);
 
     try {
@@ -940,12 +945,29 @@ export default function Home() {
                           setSelectedQueueCsvIds((prev) => {
                             if (prev.includes(csvId)) {
                               if (focusedQueueCsvId === csvId) setFocusedQueueCsvId(null);
+                              setSelectedQueueStartTimes((times) => {
+                                const next = { ...times };
+                                delete next[csvId];
+                                return next;
+                              });
                               return prev.filter((id) => id !== csvId);
                             }
+                            setSelectedQueueStartTimes((times) => (
+                              csvId in times ? times : { ...times, [csvId]: animTime }
+                            ));
                             const next = [...prev, csvId];
                             setFocusedQueueCsvId(csvId);
                             if (next.length <= MAX_SELECTED_QUEUES) return next;
-                            return next.slice(next.length - MAX_SELECTED_QUEUES);
+                            const trimmed = next.slice(next.length - MAX_SELECTED_QUEUES);
+                            const removedIds = next.filter((id) => !trimmed.includes(id));
+                            setSelectedQueueStartTimes((times) => {
+                              const nextTimes = { ...times };
+                              for (const removedId of removedIds) {
+                                delete nextTimes[removedId];
+                              }
+                              return nextTimes;
+                            });
+                            return trimmed;
                           });
                         }}
                       />
@@ -967,21 +989,23 @@ export default function Home() {
                     const maxTime = simEndTime > 0 ? simEndTime : 1;
                     const maxSize = Math.max(1, ...info.points.map((p) => p.size));
                     const maxDelay = Math.max(1e-6, ...info.points.map((p) => p.delay));
-                    const sizePath = info.points
+                    const visiblePoints = info.points.filter((p) => p.time >= info.startTime && p.time <= animTime);
+                    const sizePath = visiblePoints
                       .map((p, idx) => {
                         const x = pad + (p.time / maxTime) * innerW;
                         const y = pad + innerH - (p.size / maxSize) * innerH;
                         return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
                       })
                       .join(" ");
-                    const delayPath = info.points
+                    const delayPath = visiblePoints
                       .map((p, idx) => {
                         const x = pad + (p.time / maxTime) * innerW;
                         const y = pad + innerH - (p.delay / maxDelay) * innerH;
                         return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
                       })
                       .join(" ");
-                    const currentX = pad + (Math.min(animTime, simEndTime) / maxTime) * innerW;
+                    const currentTime = Math.min(animTime, maxTime);
+                    const currentX = pad + (currentTime / maxTime) * innerW;
 
                     return (
                       <div
