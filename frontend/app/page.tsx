@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildFatTree, nodeStroke, type Node } from "@/lib/topology";
 import TopologyWizard, {
@@ -255,11 +256,8 @@ export default function Home() {
   const [k, setK] = useState("4");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [runResult, setRunResult] = useState<RunResult | null>(null);
-  const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
 
   const [packets, setPackets] = useState<Record<string, PacketRow[]>>({});
-  const [fetchingPackets, setFetchingPackets] = useState(false);
 
   const [animTime, setAnimTime] = useState(0);
   const [animating, setAnimating] = useState(false);
@@ -549,8 +547,6 @@ export default function Home() {
   }
 
   async function fetchPacketsForRun(data: RunResult) {
-    setRunResult(data);
-    setFetchingPackets(true);
     const fetched: Record<string, PacketRow[]> = {};
     await Promise.all(
       data.linkIds.map(async (linkId) => {
@@ -592,8 +588,6 @@ export default function Home() {
     // initialize exisiting output
     setLoading(true);
     setError(null);
-    setRunResult(null);
-    setRunStatus(null);
     setPackets({});
     setAnimating(false);
     setAnimTime(0);
@@ -683,7 +677,6 @@ export default function Home() {
       });
       if (!res.ok) throw new Error(`Backend Error: ${res.status}`);
       const initialStatus: RunStatus = await res.json();
-      setRunStatus(initialStatus);
 
       void maybeRequestNotificationPermission();
 
@@ -693,7 +686,6 @@ export default function Home() {
         const statusRes = await fetch(`/runs/${latestStatus.runTag}/status`, { cache: "no-store" });
         if (!statusRes.ok) throw new Error(`Backend Error: ${statusRes.status}`);
         latestStatus = await statusRes.json();
-        setRunStatus(latestStatus);
       }
 
       notifyRunFinished(latestStatus);
@@ -710,7 +702,6 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
-      setFetchingPackets(false);
     }
   }
 
@@ -729,7 +720,7 @@ export default function Home() {
         className="fixed right-5 top-5 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white shadow-sm transition hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:hover:bg-stone-800"
         aria-label="Toggle theme"
       >
-        <img src="/sun.png" alt="" width={20} height={20} className={theme === "dark" ? "invert" : ""} />
+        <Image src="/sun.png" alt="" width={20} height={20} className={theme === "dark" ? "invert" : ""} />
       </button>
 
       <main className="min-h-screen bg-stone-100 text-stone-900 dark:bg-stone-950 dark:text-stone-50">
