@@ -870,6 +870,29 @@ export default function Home() {
                   );
                 })}
 
+                {topology.nodes.map((node) => {
+                  const isHost = node.type === "host";
+                  return (
+                    <g key={node.id}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => {
+                        setSelectedNodeId(prev => prev === node.id ? null : node.id);
+                      }}>
+                      {isHost ? (
+                        <rect x={node.x - 10} y={node.y - 8} width="20" height="16" rx="4"
+                          fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
+                      ) : (
+                        <circle cx={node.x} cy={node.y} r="12"
+                          fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
+                      )}
+                      <text x={node.x} y={node.y + 31} textAnchor="middle"
+                        className="fill-stone-500 text-[10px] dark:fill-stone-400">
+                        {node.label}
+                      </text>
+                    </g>
+                  );
+                })}
+
                 {selectedNodeId && (() => {
                   const fromNode = nodeMap.get(selectedNodeId);
                   if (!fromNode) return null;
@@ -909,29 +932,6 @@ export default function Home() {
                     );
                   });
                 })()}
-
-                {topology.nodes.map((node) => {
-                  const isHost = node.type === "host";
-                  return (
-                    <g key={node.id}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => {
-                        setSelectedNodeId(prev => prev === node.id ? null : node.id);
-                      }}>
-                      {isHost ? (
-                        <rect x={node.x - 10} y={node.y - 8} width="20" height="16" rx="4"
-                          fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
-                      ) : (
-                        <circle cx={node.x} cy={node.y} r="12"
-                          fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
-                      )}
-                      <text x={node.x} y={node.y + 31} textAnchor="middle"
-                        className="fill-stone-500 text-[10px] dark:fill-stone-400">
-                        {node.label}
-                      </text>
-                    </g>
-                  );
-                })}
               </svg>
             </div>
 
