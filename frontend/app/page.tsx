@@ -126,6 +126,7 @@ function csvIdsForSvgLink(
 
 function parseLinkDelaySeconds(linkDelay: string): number {
   const d = linkDelay.trim();
+  if (d.endsWith("s") && !d.endsWith("ms") && !d.endsWith("us") && !d.endsWith("ns")) return parseFloat(d);
   if (d.endsWith("ms")) return parseFloat(d) * 1e-3;
   if (d.endsWith("us")) return parseFloat(d) * 1e-6;
   if (d.endsWith("ns")) return parseFloat(d) * 1e-9;
@@ -280,7 +281,7 @@ export default function Home() {
     return {
       layers: 3,
       topology,
-      link: deriveLinkConfig(3, topology, "10Mbps", 1, "1ms"),
+      link: deriveLinkConfig(3, topology, "10Gbps", 1, "1ms"),
       queue: {
         congestionAlgo: "TcpNewReno",
         queueAlgo: "FifoQueueDisc",

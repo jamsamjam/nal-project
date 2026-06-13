@@ -39,13 +39,46 @@ type Step = "layers" | "shape" | "servers" | "link" | "queue";
 
 const congestionAlgos = ["TcpNewReno", "TcpCubic", "TcpDctcp"];
 const queueAlgos = ["FifoQueueDisc", "RedQueueDisc"];
+const rateUnits = ["Kbps", "Mbps", "Gbps"] as const;
+const delayUnits = ["ns", "us", "ms", "s"] as const;
+
+type RateUnit = (typeof rateUnits)[number];
+type DelayUnit = (typeof delayUnits)[number];
 
 export function parseLinkRateBps(linkRate: string): number {
   const r = linkRate.trim();
-  if (r.endsWith("Gbps")) return parseFloat(r) * 1e9;
+  if (r.endsWith("Gbps")) return parseFloat(r) * 1e9; // TODO
   if (r.endsWith("Mbps")) return parseFloat(r) * 1e6;
   if (r.endsWith("Kbps")) return parseFloat(r) * 1e3;
   return parseFloat(r);
+}
+
+function formatRateValue(value: number, unit: RateUnit): string {
+  return `${trimDecimal(value)}${unit}`;
+}
+
+function formatDelayValue(value: number, unit: DelayUnit): string {
+  return `${trimDecimal(value)}${unit}`;
+}
+
+function splitRateValue(rate: string): { value: number; unit: RateUnit } {
+  const trimmed = rate.trim();
+  for (const unit of [...rateUnits].reverse()) {
+    if (trimmed.endsWith(unit)) {
+      return { value: parseFloat(trimmed.slice(0, -unit.length)) || 0, unit };
+    }
+  }
+  return { value: parseFloat(trimmed) || 0, unit: "Gbps" };
+}
+
+function splitDelayValue(delay: string): { value: number; unit: DelayUnit } {
+  const trimmed = delay.trim();
+  for (const unit of [...delayUnits].sort((a, b) => b.length - a.length)) {
+    if (trimmed.endsWith(unit)) {
+      return { value: parseFloat(trimmed.slice(0, -unit.length)) || 0, unit };
+    }
+  }
+  return { value: parseFloat(trimmed) || 0, unit: "ms" };
 }
 
 function formatRateBps(bps: number): string {
@@ -127,6 +160,9 @@ export function getBottleneckLinkRate(config: TopologyConfig): string {
 }
 
 export default function TopologyWizard({ onSubmit, onChange }: Props) {
+  const defaultRate = splitRateValue("10Gbps");
+  const defaultDelay = splitDelayValue("1ms");
+
   const [layers, setLayers] = useState<LayerType>(1);
 
   const [torCount, setTorCount] = useState(2);
@@ -134,9 +170,11 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
   const [k, setK] = useState(4);
 
   const [serversPerTor, setServersPerTor] = useState(8);
-  const [serverToTorRate, setServerToTorRate] = useState("10Gbps");
+  const [serverToTorRateValue, setServerToTorRateValue] = useState(defaultRate.value);
+  const [serverToTorRateUnit, setServerToTorRateUnit] = useState<RateUnit>(defaultRate.unit);
   const [torOversubRatio, setTorOversubRatio] = useState(1);
-  const [linkDelay, setLinkDelay] = useState("1ms");
+  const [linkDelayValue, setLinkDelayValue] = useState(defaultDelay.value);
+  const [linkDelayUnit, setLinkDelayUnit] = useState<DelayUnit>(defaultDelay.unit);
 
   const [congestionAlgo, setCongestionAlgo] = useState(congestionAlgos[0]);
   const [queueAlgo, setQueueAlgo] = useState(queueAlgos[0]);
@@ -158,6 +196,15 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
     if (layers === 2) return { type: "two_layer", torCount, aggCount, serversPerTor };
     return { type: "three_layer", k };
   }, [layers, torCount, aggCount, serversPerTor, k]);
+
+  const serverToTorRate = useMemo(
+    () => formatRateValue(serverToTorRateValue, serverToTorRateUnit),
+    [serverToTorRateUnit, serverToTorRateValue]
+  );
+  const linkDelay = useMemo(
+    () => formatDelayValue(linkDelayValue, linkDelayUnit),
+    [linkDelayUnit, linkDelayValue]
+  );
 
   const link = useMemo(
     () => deriveLinkConfig(layers, topology, serverToTorRate, torOversubRatio, linkDelay),
@@ -260,7 +307,16 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
         {step === "link" && (
           <div className="space-y-3">
             <p className="text-sm font-semibold">Link Rates / Oversubscription</p>
-            <TextField label="Server-ToR Rate" value={serverToTorRate} onChange={setServerToTorRate} placeholder="10Gbps" />
+            <UnitNumberField
+              label="Server-ToR Rate"
+              value={serverToTorRateValue}
+              onValueChange={setServerToTorRateValue}
+              unit={serverToTorRateUnit}
+              onUnitChange={(value) => setServerToTorRateUnit(value as RateUnit)}
+              units={[...rateUnits]}
+              min={0.001}
+              step={0.1}
+            />
             {layers >= 2 && (
               <NumberField
                 label="ToR Oversub Ratio"
@@ -273,7 +329,16 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
             {layers === 3 && (
               <p className="rounded-md bg-stone-100 px-3 py-2 text-xs text-stone-600">Agg oversubscription is fixed to 1:1.</p>
             )}
-            <TextField label="Link Delay" value={linkDelay} onChange={setLinkDelay} placeholder="1ms" />
+            <UnitNumberField
+              label="Link Delay"
+              value={linkDelayValue}
+              onValueChange={setLinkDelayValue}
+              unit={linkDelayUnit}
+              onUnitChange={(value) => setLinkDelayUnit(value as DelayUnit)}
+              units={[...delayUnits]}
+              min={0.001}
+              step={0.1}
+            />
             <CalculatedField label="Calculated ToR-Agg Rate" value={link.torToAggRate} />
             {layers === 3 && <CalculatedField label="Calculated Agg-Core Rate" value={link.aggToCoreRate} />}
           </div>
@@ -386,26 +451,49 @@ function NumberField({
   );
 }
 
-function TextField({
+function UnitNumberField({
   label,
   value,
-  onChange,
-  placeholder,
+  onValueChange,
+  unit,
+  onUnitChange,
+  units,
+  min,
+  step = 1,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
+  value: number;
+  onValueChange: (value: number) => void;
+  unit: string;
+  onUnitChange: (value: string) => void;
+  units: string[];
+  min: number;
+  step?: number;
 }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-medium text-stone-600">{label}</span>
-      <input
-        className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <div className="flex gap-2">
+        <input
+          type="number"
+          className="min-w-0 flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm"
+          value={value}
+          min={min}
+          step={step}
+          onChange={(e) => onValueChange(Math.max(min, Number(e.target.value) || min))}
+        />
+        <select
+          className="w-28 rounded-md border border-stone-300 px-3 py-2 text-sm"
+          value={unit}
+          onChange={(e) => onUnitChange(e.target.value)}
+        >
+          {units.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </div>
     </label>
   );
 }
