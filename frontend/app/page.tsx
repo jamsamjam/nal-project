@@ -252,6 +252,7 @@ function buildTwoLayerTopology(torCount: number, aggCount: number, serversPerTor
 
 export default function Home() {
   const MAX_SELECTED_QUEUES = 4;
+  const playbackRates = [0.01, 0.05, 0.1, 0.5, 1];
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [k, setK] = useState("4");
   const [loading, setLoading] = useState(false);
@@ -261,6 +262,7 @@ export default function Home() {
 
   const [animTime, setAnimTime] = useState(0);
   const [animating, setAnimating] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(0.5);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedQueueCsvIds, setSelectedQueueCsvIds] = useState<string[]>([]);
   const [selectedQueueStartTimes, setSelectedQueueStartTimes] = useState<Record<string, number>>({});
@@ -526,14 +528,14 @@ export default function Home() {
     const wallStart = performance.now();
     const simStart = animStartSim.current;
     function frame() {
-      const sim = simStart + (performance.now() - wallStart) / (1000 * 60);
+      const sim = simStart + ((performance.now() - wallStart) / 1000) * playbackRate;
       if (sim >= simEndTime) { setAnimTime(simEndTime); setAnimating(false); return; }
       setAnimTime(sim);
       animRaf.current = requestAnimationFrame(frame);
     }
     animRaf.current = requestAnimationFrame(frame);
     return () => { if (animRaf.current !== null) { cancelAnimationFrame(animRaf.current); animRaf.current = null; } };
-  }, [animating, simEndTime]);
+  }, [animating, playbackRate, simEndTime]);
 
   function toggleAnim() {
     if (animating) {
@@ -806,6 +808,19 @@ export default function Home() {
                   {animTime.toFixed(3)}s / {simEndTime.toFixed(2)}s
                 </span>
               )}
+              <select
+                value={playbackRate}
+                onChange={(e) => setPlaybackRate(Number(e.target.value))}
+                disabled={!hasPackets}
+                className="h-8 rounded-md border border-stone-200 bg-white px-2 text-xs text-stone-700 disabled:opacity-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200"
+                aria-label="Playback speed"
+              >
+                {playbackRates.map((rate) => (
+                  <option key={rate} value={rate}>
+                    {rate}x
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={toggleAnim}
                 disabled={!hasPackets}
