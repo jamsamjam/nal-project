@@ -1078,7 +1078,7 @@ export default function Home() {
             </div>
           )}
         </div>
-        <footer className="pb-8 text-center text-xs text-stone-900 dark:text-stone-50">
+        <footer className="pb-8 text-center text-xs text-stone-500 dark:text-stone-400">
           <p>© 2026 Sam Lee</p>
           <p className="mt-1">
             <a
