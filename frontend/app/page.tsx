@@ -52,6 +52,8 @@ type QueueOverlay = {
   fromY: number;
   toX: number;
   toY: number;
+  markerX: number;
+  markerY: number;
 };
 
 function sleep(ms: number) {
@@ -500,12 +502,15 @@ export default function Home() {
       const fromNode = nodeMap.get(fromSvg);
       const toNode = nodeMap.get(toSvg);
       if (!fromNode || !toNode) continue;
+      const marker = queueMarkerPosition(fromNode, toNode);
       overlays.push({
         csvId,
         fromX: fromNode.x,
         fromY: fromNode.y,
         toX: toNode.x,
         toY: toNode.y,
+        markerX: marker.x,
+        markerY: marker.y,
       });
     }
     return overlays;
@@ -855,7 +860,7 @@ export default function Home() {
                 {selectedQueueOverlays.map((q) => {
                   const isFocused = focusedQueueCsvId === q.csvId;
                   return (
-                    <g key={`overlay-${q.csvId}`} style={{ cursor: "pointer" }} onClick={() => setFocusedQueueCsvId(q.csvId)}>
+                    <g key={`overlay-${q.csvId}`}>
                       <line
                         x1={q.fromX}
                         y1={q.fromY}
@@ -865,6 +870,21 @@ export default function Home() {
                         strokeWidth={isFocused ? 3.5 : 2}
                         strokeDasharray={isFocused ? "0" : "4 3"}
                         strokeOpacity={0.95}
+                      />
+                      <rect
+                        x={q.markerX - 7}
+                        y={q.markerY - 5}
+                        width={14}
+                        height={10}
+                        rx={2}
+                        fill="rgb(220, 229, 124)"
+                        stroke={isFocused ? "rgb(220, 229, 124)" : "none"}
+                        strokeWidth={isFocused ? 2 : 0}
+                        style={{ cursor: "pointer" }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedQueueCsvId(q.csvId);
+                        }}
                       />
                     </g>
                   );
@@ -906,14 +926,14 @@ export default function Home() {
                     const toNode = nodeMap.get(neighborSvgId);
                     if (!toNode) return null;
                     const marker = queueMarkerPosition(fromNode, toNode);
-                    const isFocused = focusedQueueCsvId === csvId;
                     const isSelected = selectedQueueCsvIds.includes(csvId);
+                    if (isSelected) return null;
                     return (
                       <rect key={csvId}
                         x={marker.x - 7} y={marker.y - 5} width={14} height={10} rx={2}
-                        fill={isSelected ? "rgb(220, 229, 124)" : "white"}
-                        stroke={isFocused ? "rgb(220, 229, 124)" : "none"}
-                        strokeWidth={isFocused ? 2 : 0}
+                        fill="white"
+                        stroke="none"
+                        strokeWidth={0}
                         style={{ cursor: "pointer" }}
                         onClick={(e) => {
                           e.stopPropagation();
