@@ -1078,6 +1078,28 @@ export default function Home() {
             </div>
           )}
         </div>
+        <footer className="pb-8 text-center text-xs text-stone-900 dark:text-stone-50">
+          <p>© 2026 Sam Lee</p>
+          <p className="mt-1">
+            <a
+              href="https://www.epfl.ch/labs/nal/"
+              target="_blank"
+              rel="noreferrer"
+              className="transition hover:opacity-70"
+            >
+              Network Architecture Lab
+            </a>
+              , EPFL ·{" "}
+            <a
+              href="https://github.com/jamsamjam/ns3-dcn"
+              target="_blank"
+              rel="noreferrer"
+              className="transition hover:opacity-70"
+            >
+              GitHub
+            </a>
+          </p>
+        </footer>
       </main>
 
       {wizardOpen && (
