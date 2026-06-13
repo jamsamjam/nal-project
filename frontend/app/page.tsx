@@ -793,15 +793,7 @@ export default function Home() {
                   {loading ? "Running..." : "Run"}
                 </button>
               </div>
-
-              {runStatus && (
-                <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">
-                  Status: {runStatus.status}
-                  {runStatus.status !== "completed" ? ` (${runStatus.runTag})` : ""}
-                </p>
-              )}
-              {runResult && <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">Latest run: {runResult.runTag}</p>}
-              {fetchingPackets && <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">Loading simulation results...</p>}
+              
               {topology.error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{topology.error}</p>}
               {error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p>}
             </div>
