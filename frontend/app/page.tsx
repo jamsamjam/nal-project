@@ -52,8 +52,6 @@ type QueueOverlay = {
   fromY: number;
   toX: number;
   toY: number;
-  markerX: number;
-  markerY: number;
 };
 
 function sleep(ms: number) {
@@ -61,6 +59,18 @@ function sleep(ms: number) {
 }
 
 const DATA_PACKET_BYTES = 1024;
+const QUEUE_MARKER_OFFSET = 25;
+
+function queueMarkerPosition(fromNode: Node, toNode: Node, offset = QUEUE_MARKER_OFFSET) {
+  const dx = toNode.x - fromNode.x;
+  const dy = toNode.y - fromNode.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+
+  return {
+    x: len > 0 ? fromNode.x + (dx / len) * offset : fromNode.x,
+    y: len > 0 ? fromNode.y + (dy / len) * offset : fromNode.y,
+  };
+}
 
 // 3 -> pod-0-host-1-1
 function numericToSvgId(num: number, k: number): string {
@@ -490,20 +500,12 @@ export default function Home() {
       const fromNode = nodeMap.get(fromSvg);
       const toNode = nodeMap.get(toSvg);
       if (!fromNode || !toNode) continue;
-      const dx = toNode.x - fromNode.x;
-      const dy = toNode.y - fromNode.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
-      const offset = 16;
-      const markerX = len > 0 ? fromNode.x + (dx / len) * offset : fromNode.x;
-      const markerY = len > 0 ? fromNode.y + (dy / len) * offset : fromNode.y;
       overlays.push({
         csvId,
         fromX: fromNode.x,
         fromY: fromNode.y,
         toX: toNode.x,
         toY: toNode.y,
-        markerX,
-        markerY,
       });
     }
     return overlays;
@@ -864,15 +866,6 @@ export default function Home() {
                         strokeDasharray={isFocused ? "0" : "4 3"}
                         strokeOpacity={0.95}
                       />
-                      <rect
-                        x={q.markerX - 7}
-                        y={q.markerY - 5}
-                        width={14}
-                        height={10}
-                        rx={2}
-                        fill={isFocused ? "rgb(220, 229, 124)" : "white"}
-                        strokeWidth={isFocused ? 2 : 1}
-                      />
                     </g>
                   );
                 })}
@@ -889,17 +882,15 @@ export default function Home() {
                     const csvId = `${fromNumeric}-${toNumeric}`;
                     const toNode = nodeMap.get(neighborSvgId);
                     if (!toNode) return null;
-                    const dx = toNode.x - fromNode.x;
-                    const dy = toNode.y - fromNode.y;
-                    const len = Math.sqrt(dx * dx + dy * dy);
-                    const bx = fromNode.x + (dx / len) * 30;
-                    const by = fromNode.y + (dy / len) * 30;
+                    const marker = queueMarkerPosition(fromNode, toNode);
+                    const isFocused = focusedQueueCsvId === csvId;
                     const isSelected = selectedQueueCsvIds.includes(csvId);
                     return (
                       <rect key={csvId}
-                        x={bx - 7} y={by - 4} width={14} height={8} rx={2}
-                        fill="white"
-                        stroke={isSelected ? "white" : "none"} strokeWidth={isSelected ? 1.5 : 0}
+                        x={marker.x - 7} y={marker.y - 5} width={14} height={10} rx={2}
+                        fill={isSelected ? "rgb(220, 229, 124)" : "white"}
+                        stroke={isFocused ? "rgb(220, 229, 124)" : "none"}
+                        strokeWidth={isFocused ? 2 : 0}
                         style={{ cursor: "pointer" }}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -931,7 +922,7 @@ export default function Home() {
                         <rect x={node.x - 10} y={node.y - 8} width="20" height="16" rx="4"
                           fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
                       ) : (
-                        <circle cx={node.x} cy={node.y} r="16"
+                        <circle cx={node.x} cy={node.y} r="12"
                           fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
                       )}
                       <text x={node.x} y={node.y + 31} textAnchor="middle"
