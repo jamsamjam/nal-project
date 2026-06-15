@@ -61,6 +61,33 @@ type QueueOverlay = {
   markerY: number;
 };
 
+function centerTopology(topology: RenderTopology, minWidth = 900, horizontalPadding = 120) {
+  if (!topology.nodes.length) {
+    return { topology, width: minWidth };
+  }
+
+  const minX = Math.min(...topology.nodes.map((node) => node.x));
+  const maxX = Math.max(...topology.nodes.map((node) => node.x));
+  const contentWidth = maxX - minX;
+  const width = Math.max(minWidth, contentWidth + horizontalPadding * 2);
+  const offsetX = (width - contentWidth) / 2 - minX;
+
+  return {
+    width,
+    topology: {
+      ...topology,
+      nodes: topology.nodes.map((node) => ({ ...node, x: node.x + offsetX })),
+    },
+  };
+}
+
+function nodeFill(type: Node["type"], theme: "dark" | "light") {
+  if (type === "host") {
+    return theme === "dark" ? "rgb(41, 37, 36)" : "rgb(255, 255, 255)";
+  }
+  return theme === "dark" ? "rgb(28, 25, 23)" : "rgb(255, 255, 255)";
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -265,8 +292,9 @@ function buildSingleTorTopology(serversPerTor: number, startX: number): RenderTo
   const torY = 220;
   nodes.push({ id: "tor-0", label: "ToR0", type: "tor", x: torX, y: torY });
   const count = Math.max(1, serversPerTor);
+  const hostGap = 44;
   for (let i = 0; i < count; i++) {
-    const x = torX - ((count - 1) * 34) / 2 + i * 34;
+    const x = torX - ((count - 1) * hostGap) / 2 + i * hostGap;
     const id = `host-0-${i}`;
     nodes.push({ id, label: `H${i}`, type: "host", x, y: 380 });
     links.push({ from: id, to: "tor-0" });
@@ -279,19 +307,25 @@ function buildTwoLayerTopology(torCount: number, aggCount: number, serversPerTor
   const links: { from: string; to: string }[] = [];
   const tors = Math.max(1, torCount);
   const aggs = Math.max(1, aggCount);
-  const spacing = 120;
+  const hosts = Math.max(1, serversPerTor);
+  const hostGap = 28;
+  const torSpan = Math.max(160, (hosts - 1) * hostGap + 56);
+  const spacing = torSpan;
   const baseX = startX + 80;
+  const torWidth = (tors - 1) * spacing;
 
   for (let i = 0; i < aggs; i++) {
-    nodes.push({ id: `agg-${i}`, label: `A${i}`, type: "agg", x: baseX + i * spacing, y: 140 });
+    const aggX = aggs === 1
+      ? baseX + torWidth / 2
+      : baseX + ((i + 0.5) * torWidth) / aggs;
+    nodes.push({ id: `agg-${i}`, label: `A${i}`, type: "agg", x: aggX, y: 140 });
   }
   for (let t = 0; t < tors; t++) {
     const torId = `tor-${t}`;
     nodes.push({ id: torId, label: `T${t}`, type: "tor", x: baseX + t * spacing, y: 260 });
     for (let a = 0; a < aggs; a++) links.push({ from: torId, to: `agg-${a}` });
-    const hosts = Math.max(1, serversPerTor);
     for (let h = 0; h < hosts; h++) {
-      const hx = baseX + t * spacing - ((hosts - 1) * 20) / 2 + h * 20;
+      const hx = baseX + t * spacing - ((hosts - 1) * hostGap) / 2 + h * hostGap;
       const hostId = `host-${t}-${h}`;
       nodes.push({ id: hostId, label: `H${t}.${h}`, type: "host", x: hx, y: 390 });
       links.push({ from: hostId, to: torId });
@@ -361,7 +395,7 @@ export default function Home() {
     };
   }, [k]);
   const appliedConfig = topologyConfig ?? defaultConfig;
-  const topology = useMemo(() => {
+  const rawTopology = useMemo(() => {
     if (!topologyConfig) return buildFatTree(numericK, startX);
     if (topologyConfig.topology.type === "single_tor") {
       return buildSingleTorTopology(topologyConfig.topology.serversPerTor, startX);
@@ -377,11 +411,10 @@ export default function Home() {
     return buildFatTree(topologyConfig.topology.k, startX);
   }, [topologyConfig, numericK, startX]);
 
-  const svgWidth = useMemo(() => {
-    if (!topology.nodes.length) return 900;
-    const maxX = Math.max(...topology.nodes.map((n) => n.x));
-    return Math.max(900, maxX + 120);
-  }, [topology.nodes]);
+  const { topology, width: svgWidth } = useMemo(
+    () => centerTopology(rawTopology),
+    [rawTopology]
+  );
   const nodeMap = useMemo(
     () => new Map(topology.nodes.map((n) => [n.id, n])),
     [topology.nodes]
@@ -436,7 +469,6 @@ export default function Home() {
   }, [topologyConfig, numericK]);
 
   const lineStroke = theme === "dark" ? "rgb(68, 64, 60)" : "rgb(214, 211, 209)";
-  const nodeFill = theme === "dark" ? "rgb(28, 25, 23)" : "rgb(255, 255, 255)";
 
   const simEndTime = useMemo(() => {
     let max = 0;
@@ -968,10 +1000,10 @@ export default function Home() {
                       }}>
                       {isHost ? (
                         <rect x={node.x - 10} y={node.y - 8} width="20" height="16" rx="4"
-                          fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
+                          fill={nodeFill(node.type, theme)} stroke={nodeStroke(node.type)} strokeWidth="2" />
                       ) : (
                         <circle cx={node.x} cy={node.y} r="12"
-                          fill={nodeFill} stroke={nodeStroke(node.type)} strokeWidth="2" />
+                          fill={nodeFill(node.type, theme)} stroke={nodeStroke(node.type)} strokeWidth="2" />
                       )}
                       <text x={node.x} y={node.y + 31} textAnchor="middle"
                         className="fill-stone-500 text-[10px] dark:fill-stone-400">

@@ -8,6 +8,12 @@ export type Node = {
 
 export type Link = { from: string; to: string };
 
+function centeredLinePositions(count: number, centerX: number, gap: number) {
+  if (count <= 0) return [];
+  const startX = centerX - ((count - 1) * gap) / 2;
+  return Array.from({ length: count }, (_, index) => startX + index * gap);
+}
+
 export function buildFatTree(k: number, startX: number) {
   const nodes: Node[] = [];
   const links: Link[] = [];
@@ -17,29 +23,33 @@ export function buildFatTree(k: number, startX: number) {
   }
 
   const half = k / 2;
-  const podWidth = 220;
+  const podWidth = 250;
+  const switchGap = 84;
+  const hostGap = 46;
   const coreY = 60;
   const aggY = 180;
   const torY = 300;
   const hostY = 420;
 
   const coreCount = half * half;
-  const podSpan = (k - 1) * podWidth + (half - 1) * 70;
-  const coreSpan = (coreCount - 1) * 90;
-  const coreStartX = startX + (podSpan - coreSpan) / 2;
+  const podSpan = (k - 1) * podWidth + (half - 1) * switchGap;
+  const topologyCenterX = startX + podSpan / 2;
+  const coreXs = centeredLinePositions(coreCount, topologyCenterX, 100);
 
   for (let i = 0; i < coreCount; i++) {
     nodes.push({
       id: `core-${i}`,
       label: `C${i}`,
       type: "core",
-      x: coreStartX + i * 90,
+      x: coreXs[i],
       y: coreY,
     });
   }
 
   for (let p = 0; p < k; p++) {
     const podX = startX + p * podWidth;
+    const podCenterX = podX + ((half - 1) * switchGap) / 2;
+    const layerXs = centeredLinePositions(half, podCenterX, switchGap);
 
     for (let a = 0; a < half; a++) {
       const aggId = `pod-${p}-agg-${a}`;
@@ -47,7 +57,7 @@ export function buildFatTree(k: number, startX: number) {
         id: aggId,
         label: `P${p} A${a}`,
         type: "agg",
-        x: podX + a * 70,
+        x: layerXs[a],
         y: aggY,
       });
 
@@ -62,7 +72,7 @@ export function buildFatTree(k: number, startX: number) {
         id: torId,
         label: `P${p} T${e}`,
         type: "tor",
-        x: podX + e * 70,
+        x: layerXs[e],
         y: torY,
       });
 
@@ -76,7 +86,7 @@ export function buildFatTree(k: number, startX: number) {
           id: hostId,
           label: `H${p}.${e}.${h}`,
           type: "host",
-          x: podX + e * 70 - 18 + h * 36,
+          x: layerXs[e] - ((half - 1) * hostGap) / 2 + h * hostGap,
           y: hostY,
         });
         links.push({ from: hostId, to: torId });
@@ -91,5 +101,5 @@ export function nodeStroke(type: Node["type"]) {
   if (type === "core") return "rgb(186, 186, 186)";
   if (type === "agg") return "rgb(62, 117, 255)";
   if (type === "tor") return "rgb(138, 197, 255)";
-  return "rgb(138, 197, 255)";
+  return "rgb(220, 215, 210)";
 }
