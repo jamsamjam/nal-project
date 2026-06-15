@@ -54,6 +54,10 @@ _run_jobs: dict[str, RunStatus] = {}
 app.mount("/output", StaticFiles(directory=output_path), name="output")
 
 
+def normalize_run_tag(run_tag: str) -> str:
+    return run_tag.replace("/", "_").replace(" ", "_")
+
+
 def build_run_tag(req: RunRequest) -> str:
     tcp_variant = req.tcp.split("::")[-1]
     queue_variant = req.queue.split("::")[-1]
@@ -71,7 +75,7 @@ def build_run_tag(req: RunRequest) -> str:
     )
     if queue_variant == "RedQueueDisc":
         run_tag += f"_redmin{req.redMinThresholdPct:g}_redmax{req.redMaxThresholdPct:g}"
-    return run_tag
+    return normalize_run_tag(run_tag)
 
 
 def ns3_type(name: str) -> str:
@@ -145,6 +149,7 @@ def launch_run(req: RunRequest, run_tag: str):
                 f"--redMaxThresholdPct={req.redMaxThresholdPct}",
                 f"--load={req.load}",
                 f"--workload={req.workload}",
+                f"--runTag={run_tag}",
             ]
             subprocess.run(args, cwd=ns3_path, check=True)
 

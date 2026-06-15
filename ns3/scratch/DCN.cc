@@ -35,6 +35,17 @@ FormatCompactDouble(double value)
     return oss.str();
 }
 
+static std::string
+NormalizeRunTag(std::string runTag)
+{
+    for (auto& c : runTag)
+    {
+        if (c == '/' || c == ' ')
+            c = '_';
+    }
+    return runTag;
+}
+
 NS_LOG_COMPONENT_DEFINE("FatTreeTopology");
 
 static uint16_t basePort = 9000;
@@ -598,6 +609,7 @@ main(int argc, char* argv[])
     double redMaxThresholdPct = 60.0;
     double loadPct = 50.0;
     std::string workloadName = "Google_AllRPC";
+    std::string runTag;
     double simTime = 10.0;
 
     CommandLine cmd(__FILE__);
@@ -617,6 +629,7 @@ main(int argc, char* argv[])
     cmd.AddValue("redMaxThresholdPct", "RED maximum threshold as a percent of queue capacity", redMaxThresholdPct);
     cmd.AddValue("load", "Per-source offered load as a percent of the server uplink", loadPct);
     cmd.AddValue("workload", "Workload CDF file stem under ../workloads", workloadName);
+    cmd.AddValue("runTag", "Output run tag. If omitted, derive one from simulation parameters.", runTag);
     cmd.Parse(argc, argv);
 
     std::string tcpVariant = tcpType.substr(tcpType.rfind(':') + 1);
@@ -648,27 +661,30 @@ main(int argc, char* argv[])
     const double referenceRttSeconds = 2.0 * static_cast<double>(maxHostHops) * referenceDelaySeconds;
     const double minSimTimeSeconds = 1.0;
     simTime = std::max(minSimTimeSeconds, 10.0 * (maxRttSeconds / referenceRttSeconds));
-    std::string runTag = "L" + std::to_string(layers)
-        + "_k" + std::to_string(k)
-        + "_t" + std::to_string(torCount)
-        + "_a" + std::to_string(aggCount)
-        + "_s" + std::to_string(serversPerTor)
-        + "_d" + linkDelay
-        + "_rsta" + serverToTorRate
-        + "_rta" + torToAggRate
-        + "_rac" + aggToCoreRate
-        + "_tcp" + tcpVariant
-        + "_q" + queueVariant
-        + "_load" + FormatCompactDouble(loadPct)
-        + "_w" + workloadName;
-
-    if (queueVariant == "RedQueueDisc")
+    if (runTag.empty())
     {
-        runTag += "_redmin" + FormatCompactDouble(redMinThresholdPct)
-            + "_redmax" + FormatCompactDouble(redMaxThresholdPct);
+        runTag = "L" + std::to_string(layers)
+            + "_k" + std::to_string(k)
+            + "_t" + std::to_string(torCount)
+            + "_a" + std::to_string(aggCount)
+            + "_s" + std::to_string(serversPerTor)
+            + "_d" + linkDelay
+            + "_rsta" + serverToTorRate
+            + "_rta" + torToAggRate
+            + "_rac" + aggToCoreRate
+            + "_tcp" + tcpVariant
+            + "_q" + queueVariant
+            + "_load" + FormatCompactDouble(loadPct)
+            + "_w" + workloadName;
+
+        if (queueVariant == "RedQueueDisc")
+        {
+            runTag += "_redmin" + FormatCompactDouble(redMinThresholdPct)
+                + "_redmax" + FormatCompactDouble(redMaxThresholdPct);
+        }
     }
 
-    for (auto& c : runTag) if (c == '/' || c == ' ') c = '_';
+    runTag = NormalizeRunTag(runTag);
     std::string csvDir = csvBase + "/" + runTag;
     std::filesystem::create_directories(csvDir);
     const uint64_t bottleneckBps = std::min({DataRate(serverToTorRate).GetBitRate(),
