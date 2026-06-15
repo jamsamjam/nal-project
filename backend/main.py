@@ -24,6 +24,8 @@ class RunRequest(BaseModel):
     queue: str = "FifoQueueDisc"
     redMinThresholdPct: float = 20.0
     redMaxThresholdPct: float = 60.0
+    load: float = 50.0
+    workload: str = "Google_AllRPC"
 
 
 class RunStatus(BaseModel):
@@ -65,6 +67,7 @@ def build_run_tag(req: RunRequest) -> str:
         f"_rta{tor_to_agg_rate}"
         f"_rac{agg_to_core_rate}"
         f"_tcp{tcp_variant}_q{queue_variant}"
+        f"_load{req.load:g}_w{req.workload}"
     )
     if queue_variant == "RedQueueDisc":
         run_tag += f"_redmin{req.redMinThresholdPct:g}_redmax{req.redMaxThresholdPct:g}"
@@ -140,6 +143,8 @@ def launch_run(req: RunRequest, run_tag: str):
                 f"--queue={ns3_type(req.queue)}",
                 f"--redMinThresholdPct={req.redMinThresholdPct}",
                 f"--redMaxThresholdPct={req.redMaxThresholdPct}",
+                f"--load={req.load}",
+                f"--workload={req.workload}",
             ]
             subprocess.run(args, cwd=ns3_path, check=True)
 

@@ -13,9 +13,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -61,6 +64,237 @@ struct LinkTraceData
 
 static std::unordered_map<std::string, LinkTraceData> tracesByLink;
 static CsvLogger* g_csvLogger = nullptr;
+
+struct WorkloadEntry
+{
+    uint32_t sizeBytes = 0;
+    double cdf = 0.0;
+};
+
+struct WorkloadDistribution
+{
+    std::string name;
+    double averageMessageBytes = 0.0;
+    std::vector<WorkloadEntry> entries;
+
+    uint32_t Sample(Ptr<UniformRandomVariable> rv) const
+    {
+        if (entries.empty())
+            return 0;
+
+        const double u = rv->GetValue();
+        for (const auto& entry : entries)
+        {
+            if (u <= entry.cdf)
+                return entry.sizeBytes;
+        }
+        return entries.back().sizeBytes;
+    }
+};
+
+static WorkloadDistribution
+LoadWorkloadDistribution(const std::string& workloadName)
+{
+    WorkloadDistribution distribution;
+    distribution.name = workloadName;
+
+    std::string filename = workloadName;
+    if (filename.size() < 4 || filename.substr(filename.size() - 4) != ".txt")
+        filename += ".txt";
+
+    const std::filesystem::path workloadPath = std::filesystem::path("../workloads") / filename;
+    std::ifstream input(workloadPath);
+    if (!input.is_open())
+    {
+        throw std::runtime_error("Unable to open workload file: " + workloadPath.string());
+    }
+
+    input >> distribution.averageMessageBytes;
+    if (!input.good() || distribution.averageMessageBytes <= 0.0)
+    {
+        throw std::runtime_error("Invalid average message size in workload file: " + workloadPath.string());
+    }
+
+    uint32_t sizeBytes = 0;
+    double cdf = 0.0;
+    while (input >> sizeBytes >> cdf)
+    {
+        distribution.entries.push_back({sizeBytes, std::clamp(cdf, 0.0, 1.0)});
+    }
+
+    if (distribution.entries.empty())
+    {
+        throw std::runtime_error("Workload file contains no CDF entries: " + workloadPath.string());
+    }
+
+    distribution.entries.back().cdf = 1.0;
+    return distribution;
+}
+
+class PoissonWorkloadApp : public Application
+{
+public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("PoissonWorkloadApp").SetParent<Application>().SetGroupName("Applications");
+        return tid;
+    }
+
+    void Configure(uint32_t sourceHostId,
+                   const std::vector<Ipv4Address>& hostAddresses,
+                   uint16_t port,
+                   double lambdaMessagesPerSecond,
+                   const WorkloadDistribution& distribution)
+    {
+        m_sourceHostId = sourceHostId;
+        m_hostAddresses = hostAddresses;
+        m_port = port;
+        m_lambdaMessagesPerSecond = lambdaMessagesPerSecond;
+        m_distribution = distribution;
+    }
+
+private:
+    void StartApplication() override
+    {
+        m_running = true;
+        m_socketByHost.resize(m_hostAddresses.size());
+        m_pendingBytesByHost.assign(m_hostAddresses.size(), 0);
+
+        // Each host acts as an independent Poisson source
+        // We pre-create one TCP socket per src-dest pair and reuse it
+        for (uint32_t hostId = 0; hostId < m_hostAddresses.size(); ++hostId)
+        {
+            if (hostId == m_sourceHostId)
+                continue;
+
+            Ptr<Socket> socket = Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
+            socket->SetConnectCallback(MakeCallback(&PoissonWorkloadApp::HandleConnect, this),
+                                       MakeCallback(&PoissonWorkloadApp::HandleConnectFail, this));
+            socket->Connect(InetSocketAddress(m_hostAddresses[hostId], m_port));
+            socket->SetSendCallback(MakeCallback(&PoissonWorkloadApp::HandleSend, this));
+            m_socketByHost[hostId] = socket;
+            m_destinationHostIds.push_back(hostId);
+        }
+
+        m_interArrivalRv = CreateObject<ExponentialRandomVariable>();
+        if (m_lambdaMessagesPerSecond > 0.0)
+            m_interArrivalRv->SetAttribute("Mean", DoubleValue(1.0 / m_lambdaMessagesPerSecond));
+        m_choiceRv = CreateObject<UniformRandomVariable>();
+
+        ScheduleNextArrival();
+    }
+
+    void StopApplication() override
+    {
+        m_running = false;
+        if (m_nextArrivalEvent.IsPending())
+            Simulator::Cancel(m_nextArrivalEvent);
+
+        for (auto& socket : m_socketByHost)
+        {
+            if (socket != nullptr)
+            {
+                socket->Close();
+                socket = nullptr;
+            }
+        }
+        m_socketByHost.clear();
+        m_pendingBytesByHost.clear();
+        m_destinationHostIds.clear();
+    }
+
+    void ScheduleNextArrival()
+    {
+        if (!m_running || m_lambdaMessagesPerSecond <= 0.0 || m_destinationHostIds.empty())
+            return;
+
+        // Poisson arrivals are implemented via exponentially distributed inter-arrival times
+        // If N(t) ~ Poisson(lambda), then inter-arrival time ~ Exp(lambda)
+        const double deltaSeconds = std::max(0.0, m_interArrivalRv->GetValue());
+        m_nextArrivalEvent = Simulator::Schedule(Seconds(deltaSeconds), &PoissonWorkloadApp::GenerateMessage, this);
+    }
+
+    void GenerateMessage()
+    {
+        if (!m_running || m_destinationHostIds.empty())
+            return;
+
+        // On each Poisson arrival:
+        // Randomly choose a destination host (except the source)
+        const uint32_t destinationIndex =
+            m_choiceRv->GetInteger(0, static_cast<uint32_t>(m_destinationHostIds.size() - 1));
+        const uint32_t destinationHostId = m_destinationHostIds[destinationIndex];
+
+        // Sample a message size from the workload
+        const uint32_t messageBytes = m_distribution.Sample(m_choiceRv);
+        if (messageBytes > 0)
+        {
+            // Generate one application message
+            m_pendingBytesByHost[destinationHostId] += messageBytes;
+            TrySend(destinationHostId);
+        }
+
+        ScheduleNextArrival();
+    }
+
+    void HandleSend(Ptr<Socket> socket, uint32_t)
+    {
+        const uint32_t destinationHostId = FindDestinationHostId(socket);
+        if (destinationHostId != std::numeric_limits<uint32_t>::max())
+            TrySend(destinationHostId);
+    }
+
+    void HandleConnect(Ptr<Socket> socket)
+    {
+        const uint32_t destinationHostId = FindDestinationHostId(socket);
+        if (destinationHostId != std::numeric_limits<uint32_t>::max())
+            TrySend(destinationHostId);
+    }
+
+    void HandleConnectFail(Ptr<Socket>)
+    {
+    }
+
+    uint32_t FindDestinationHostId(Ptr<Socket> socket) const
+    {
+        for (uint32_t hostId = 0; hostId < m_socketByHost.size(); ++hostId)
+        {
+            if (m_socketByHost[hostId] == socket)
+                return hostId;
+        }
+        return std::numeric_limits<uint32_t>::max();
+    }
+
+    void TrySend(uint32_t destinationHostId)
+    {
+        Ptr<Socket> socket = m_socketByHost[destinationHostId];
+        if (socket == nullptr)
+            return;
+
+        while (m_pendingBytesByHost[destinationHostId] > 0)
+        {
+            const uint32_t bytesToSend =
+                static_cast<uint32_t>(std::min<uint64_t>(m_pendingBytesByHost[destinationHostId], 64 * 1024));
+            const int sent = socket->Send(Create<Packet>(bytesToSend));
+            if (sent <= 0)
+                break;
+            m_pendingBytesByHost[destinationHostId] -= static_cast<uint64_t>(sent);
+        }
+    }
+
+    uint32_t m_sourceHostId = 0;
+    uint16_t m_port = 0;
+    double m_lambdaMessagesPerSecond = 0.0;
+    bool m_running = false;
+    EventId m_nextArrivalEvent;
+    WorkloadDistribution m_distribution;
+    std::vector<Ipv4Address> m_hostAddresses;
+    std::vector<uint32_t> m_destinationHostIds;
+    std::vector<Ptr<Socket>> m_socketByHost;
+    std::vector<uint64_t> m_pendingBytesByHost;
+    Ptr<ExponentialRandomVariable> m_interArrivalRv;
+    Ptr<UniformRandomVariable> m_choiceRv;
+};
 
 static void
 QueueLenTrace(std::string linkId, uint32_t oldValue, uint32_t newValue)
@@ -362,6 +596,8 @@ main(int argc, char* argv[])
     std::string queueDiscType = "ns3::FifoQueueDisc";
     double redMinThresholdPct = 20.0;
     double redMaxThresholdPct = 60.0;
+    double loadPct = 50.0;
+    std::string workloadName = "Google_AllRPC";
     double simTime = 10.0;
 
     CommandLine cmd(__FILE__);
@@ -379,6 +615,8 @@ main(int argc, char* argv[])
     cmd.AddValue("queue", "QueueDisc type", queueDiscType);
     cmd.AddValue("redMinThresholdPct", "RED minimum threshold as a percent of queue capacity", redMinThresholdPct);
     cmd.AddValue("redMaxThresholdPct", "RED maximum threshold as a percent of queue capacity", redMaxThresholdPct);
+    cmd.AddValue("load", "Per-source offered load as a percent of the server uplink", loadPct);
+    cmd.AddValue("workload", "Workload CDF file stem under ../workloads", workloadName);
     cmd.Parse(argc, argv);
 
     std::string tcpVariant = tcpType.substr(tcpType.rfind(':') + 1);
@@ -420,7 +658,9 @@ main(int argc, char* argv[])
         + "_rta" + torToAggRate
         + "_rac" + aggToCoreRate
         + "_tcp" + tcpVariant
-        + "_q" + queueVariant;
+        + "_q" + queueVariant
+        + "_load" + FormatCompactDouble(loadPct)
+        + "_w" + workloadName;
 
     if (queueVariant == "RedQueueDisc")
     {
@@ -463,6 +703,8 @@ main(int argc, char* argv[])
               << " serverToTorRate=" << serverToTorRate
               << " torToAggRate=" << torToAggRate
               << " aggToCoreRate=" << aggToCoreRate
+              << " loadPct=" << loadPct
+              << " workload=" << workloadName
               << " maxHostHops=" << maxHostHops
               << " maxRttSeconds=" << maxRttSeconds
               << " simTime=" << simTime
@@ -569,18 +811,6 @@ main(int argc, char* argv[])
     for (uint32_t h = 0; h < topo.numHosts; h++)
         hostAddr[h] = nodes.Get(h)->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
 
-    // Random permutation traffic: host[i] -> host[perm[i]]
-    Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
-    std::vector<uint32_t> perm(topo.numHosts);
-    std::iota(perm.begin(), perm.end(), 0); // perm[i] = i
-
-    // Fisher-Yates shuffle modern algorithm
-    for (uint32_t i = topo.numHosts - 1; i > 0; i--)
-    { 
-        uint32_t j = static_cast<uint32_t>(rng->GetValue(0.0, static_cast<double>(i + 1)));
-        std::swap(perm[i], perm[j]);
-    }
-
     PacketSinkHelper sinkHelper("ns3::TcpSocketFactory",
         InetSocketAddress(Ipv4Address::GetAny(), basePort));
     for (uint32_t h = 0; h < topo.numHosts; h++)
@@ -589,26 +819,21 @@ main(int argc, char* argv[])
         sink.Start(Seconds(0.0));
         sink.Stop(Seconds(simTime + 1.0));
     }
+    const WorkloadDistribution workload = LoadWorkloadDistribution(workloadName);
+
+    // load = target utilization of each server uplink (in percent)
+    const double loadFraction = std::clamp(loadPct / 100.0, 0.0, 1.0);
+    const double perSourceTargetBps = static_cast<double>(DataRate(serverToTorRate).GetBitRate()) * loadFraction;
+    const double lambdaMessagesPerSecond =
+        workload.averageMessageBytes > 0.0 ? perSourceTargetBps / (8.0 * workload.averageMessageBytes) : 0.0;
 
     for (uint32_t h = 0; h < topo.numHosts; h++)
     {
-        uint32_t dst = perm[h];
-        if (dst == h)
-            continue;
-
-        Ipv4Address dstAddr = hostAddr[dst];
-
-        // OnOffHelper: sends at constant rate when on, idle when off
-        OnOffHelper onoff("ns3::TcpSocketFactory",
-            InetSocketAddress(dstAddr, basePort));
-
-        onoff.SetConstantRate(DataRate(serverToTorRate), 1024);
-        onoff.SetAttribute("OnTime",  StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
-        onoff.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
-
-        ApplicationContainer src = onoff.Install(nodes.Get(h));
-        src.Start(Seconds(0.0));
-        src.Stop(Seconds(simTime));
+        Ptr<PoissonWorkloadApp> app = CreateObject<PoissonWorkloadApp>();
+        app->Configure(h, hostAddr, basePort, lambdaMessagesPerSecond, workload);
+        nodes.Get(h)->AddApplication(app);
+        app->SetStartTime(Seconds(0.0));
+        app->SetStopTime(Seconds(simTime));
     }
 
     CsvLogger csvLogger(csvDir);

@@ -28,6 +28,10 @@ export type TopologyConfig = {
     redMinThresholdPct: number;
     redMaxThresholdPct: number;
   };
+  traffic: {
+    loadPct: number;
+    workload: string;
+  };
 };
 
 type Props = {
@@ -35,10 +39,18 @@ type Props = {
   onChange?: (config: Partial<TopologyConfig>) => void;
 };
 
-type Step = "layers" | "shape" | "servers" | "link" | "queue";
+type Step = "layers" | "shape" | "servers" | "link" | "queue" | "workload";
 
 const congestionAlgos = ["TcpNewReno", "TcpCubic", "TcpDctcp"];
 const queueAlgos = ["FifoQueueDisc", "RedQueueDisc"];
+const workloadOptions = [
+  "Google_AllRPC",
+  "Google_SearchRPC",
+  "Facebook_HadoopDist_All",
+  "FacebookKeyValue_Sampled",
+  "Fabricated_Heavy_Head",
+  "Fabricated_Heavy_Middle",
+];
 const rateUnits = ["Kbps", "Mbps", "Gbps"] as const;
 const delayUnits = ["ns", "us", "ms", "s"] as const;
 
@@ -180,13 +192,15 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
   const [queueAlgo, setQueueAlgo] = useState(queueAlgos[0]);
   const [redMinThresholdPct, setRedMinThresholdPct] = useState(20);
   const [redMaxThresholdPct, setRedMaxThresholdPct] = useState(60);
+  const [loadPct, setLoadPct] = useState(50);
+  const [workload, setWorkload] = useState(workloadOptions[0]);
 
   const [stepIndex, setStepIndex] = useState(0);
 
   const steps = useMemo<Step[]>(() => {
-    if (layers === 1) return ["layers", "servers", "link", "queue"];
-    if (layers === 2) return ["layers", "shape", "servers", "link", "queue"];
-    return ["layers", "shape", "link", "queue"];
+    if (layers === 1) return ["layers", "servers", "link", "queue", "workload"];
+    if (layers === 2) return ["layers", "shape", "servers", "link", "queue", "workload"];
+    return ["layers", "shape", "link", "queue", "workload"];
   }, [layers]);
 
   const step = steps[stepIndex];
@@ -225,8 +239,12 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
         redMinThresholdPct,
         redMaxThresholdPct: effectiveRedMaxThresholdPct,
       },
+      traffic: {
+        loadPct,
+        workload,
+      },
     };
-  }, [layers, topology, link, congestionAlgo, queueAlgo, redMinThresholdPct, redMaxThresholdPct]);
+  }, [layers, topology, link, congestionAlgo, queueAlgo, redMinThresholdPct, redMaxThresholdPct, loadPct, workload]);
 
   function goNext() {
     setStepIndex((prev) => Math.min(prev + 1, steps.length - 1));
@@ -393,6 +411,23 @@ export default function TopologyWizard({ onSubmit, onChange }: Props) {
             )}
           </div>
         )}
+
+        {step === "workload" && (
+          <div className="space-y-3">
+            <p className="text-sm font-semibold">traffic workload</p>
+            <NumberField
+              label="Load (%)"
+              value={loadPct}
+              onChange={(value) => setLoadPct(clampPercent(value))}
+              min={0}
+              step={1}
+            />
+            <SelectField label="Message Distribution" value={workload} options={workloadOptions} onChange={setWorkload} />
+            <p className="rounded-md bg-stone-100 px-3 py-2 text-xs text-stone-600">
+              Each server generates independent Poisson message arrivals using the selected message-size CDF.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="mt-4 flex items-center justify-between">
@@ -548,6 +583,8 @@ function labelForStep(step: Step): string {
       return "Links";
     case "queue":
       return "Queue";
+    case "workload":
+      return "Workload";
     default:
       return step;
   }

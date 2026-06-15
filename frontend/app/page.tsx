@@ -350,6 +350,10 @@ export default function Home() {
         redMinThresholdPct: 20,
         redMaxThresholdPct: 60,
       },
+      traffic: {
+        loadPct: 50,
+        workload: "Google_AllRPC",
+      },
     };
   }, [k]);
   const appliedConfig = topologyConfig ?? defaultConfig;
@@ -659,6 +663,8 @@ export default function Home() {
             queue: defaultConfig.queue.queueAlgo,
             redMinThresholdPct: defaultConfig.queue.redMinThresholdPct,
             redMaxThresholdPct: defaultConfig.queue.redMaxThresholdPct,
+            load: defaultConfig.traffic.loadPct,
+            workload: defaultConfig.traffic.workload,
           };
         }
         if (topologyConfig.topology.type === "single_tor") {
@@ -677,6 +683,8 @@ export default function Home() {
             queue: topologyConfig.queue.queueAlgo,
             redMinThresholdPct: topologyConfig.queue.redMinThresholdPct,
             redMaxThresholdPct: topologyConfig.queue.redMaxThresholdPct,
+            load: topologyConfig.traffic.loadPct,
+            workload: topologyConfig.traffic.workload,
           };
         }
         if (topologyConfig.topology.type === "two_layer") {
@@ -695,6 +703,8 @@ export default function Home() {
             queue: topologyConfig.queue.queueAlgo,
             redMinThresholdPct: topologyConfig.queue.redMinThresholdPct,
             redMaxThresholdPct: topologyConfig.queue.redMaxThresholdPct,
+            load: topologyConfig.traffic.loadPct,
+            workload: topologyConfig.traffic.workload,
           };
         }
         return {
@@ -712,6 +722,8 @@ export default function Home() {
           queue: topologyConfig.queue.queueAlgo,
           redMinThresholdPct: topologyConfig.queue.redMinThresholdPct,
           redMaxThresholdPct: topologyConfig.queue.redMaxThresholdPct,
+          load: topologyConfig.traffic.loadPct,
+          workload: topologyConfig.traffic.workload,
         };
       })();
 
@@ -816,6 +828,12 @@ export default function Home() {
                     </span>
                   </>
                 )}
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">
+                  Load: {appliedConfig.traffic.loadPct}%
+                </span>
+                <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">
+                  Workload: {appliedConfig.traffic.workload}
+                </span>
               </div>
                 <button
                   type="button"
