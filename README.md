@@ -12,6 +12,7 @@ flowchart LR
     L1 --> L1S[# Servers per ToR]
     L1S --> D[linkrate, delay]
     D --> C[congestion/queue algo]
+    C --> W[workload: load, msgDist]
 
     A -->|2| L2[# ToRs, # Agg]
     L2 --> L1S
@@ -41,6 +42,6 @@ tmux
 | Frontend     | React, Next.js |
 | Backend      | FastAPI, RQ |
 | Simulation   | ns-3 |
-| Storage      | AWS |
+<!-- | Storage      | AWS | -->
 
 
