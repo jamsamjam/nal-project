@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pathlib import Path
 import csv
+import shutil
 import subprocess
 from threading import Lock, Thread
 from typing import Literal
@@ -82,9 +83,26 @@ def ns3_type(name: str) -> str:
     return name if name.startswith("ns3::") else f"ns3::{name}"
 
 
+def completion_marker(run_dir: Path) -> Path:
+    return run_dir / ".complete"
+
+
+def is_completed_run_dir(run_dir: Path) -> bool:
+    return run_dir.exists() and completion_marker(run_dir).exists()
+
+
+def mark_run_complete(run_dir: Path):
+    completion_marker(run_dir).touch()
+
+
+def remove_incomplete_run_dir(run_dir: Path):
+    if run_dir.exists() and not is_completed_run_dir(run_dir):
+        shutil.rmtree(run_dir)
+
+
 def get_link_ids(run_tag: str) -> list[str]:
     run_dir = output_path / run_tag
-    if not run_dir.exists():
+    if not is_completed_run_dir(run_dir):
         raise HTTPException(status_code=404, detail=f"Run '{run_tag}' not found.")
 
     csv_files = sorted(run_dir.glob("packets_*.csv"))
@@ -129,6 +147,7 @@ def launch_run(req: RunRequest, run_tag: str):
     try:
         set_job_status(run_tag, "running")
         ensure_ns3_ready()
+        remove_incomplete_run_dir(run_dir)
 
         if not run_dir.exists():
             args = [
@@ -153,6 +172,7 @@ def launch_run(req: RunRequest, run_tag: str):
             ]
             subprocess.run(args, cwd=ns3_path, check=True)
 
+        mark_run_complete(run_dir)
         set_job_status(run_tag, "completed", link_ids=get_link_ids(run_tag))
     except subprocess.CalledProcessError as e:
         set_job_status(run_tag, "failed", error=f"ns-3 run failed: {e}")
@@ -171,12 +191,13 @@ def run(req: RunRequest):
     if existing and existing.status in {"queued", "running"}:
         return existing
 
-    if not run_dir.exists():
-        set_job_status(run_tag, "queued")
-        Thread(target=launch_run, args=(req, run_tag), daemon=True).start()
-        return get_job_status(run_tag)
+    if is_completed_run_dir(run_dir):
+        return RunStatus(runTag=run_tag, status="completed", linkIds=get_link_ids(run_tag))
 
-    return RunStatus(runTag=run_tag, status="completed", linkIds=get_link_ids(run_tag))
+    remove_incomplete_run_dir(run_dir)
+    set_job_status(run_tag, "queued")
+    Thread(target=launch_run, args=(req, run_tag), daemon=True).start()
+    return get_job_status(run_tag)
 
 
 @app.get("/runs/{run_tag}/status")
@@ -186,7 +207,7 @@ def get_run_status(run_tag: str):
         return status
 
     run_dir = output_path / run_tag
-    if run_dir.exists():
+    if is_completed_run_dir(run_dir):
         return RunStatus(runTag=run_tag, status="completed", linkIds=get_link_ids(run_tag))
 
     if status is None:
@@ -202,7 +223,11 @@ def get_run_results(run_tag: str):
 
 @app.get("/results/{run_tag}/link/{link_id}")
 def get_link_packets(run_tag: str, link_id: str):
-    csv_path = output_path / run_tag / f"packets_{link_id}.csv"
+    run_dir = output_path / run_tag
+    if not is_completed_run_dir(run_dir):
+        raise HTTPException(status_code=404, detail=f"Run '{run_tag}' not found.")
+
+    csv_path = run_dir / f"packets_{link_id}.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail=f"Link '{link_id}' not found in run '{run_tag}'.")
 
