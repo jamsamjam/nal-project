@@ -81,10 +81,7 @@ function centerTopology(topology: RenderTopology, minWidth = 900, horizontalPadd
   };
 }
 
-function nodeFill(type: Node["type"], theme: "dark" | "light") {
-  if (type === "host") {
-    return theme === "dark" ? "rgb(231, 229, 228)" : "rgb(255, 255, 255)";
-  }
+function nodeFill(theme: "dark" | "light") {
   return theme === "dark" ? "rgb(28, 25, 23)" : "rgb(255, 255, 255)";
 }
 
@@ -1000,10 +997,10 @@ export default function Home() {
                       }}>
                       {isHost ? (
                         <rect x={node.x - 10} y={node.y - 8} width="20" height="16" rx="4"
-                          fill={nodeFill(node.type, theme)} stroke={nodeStroke(node.type)} strokeWidth="2" />
+                          fill={nodeFill(theme)} stroke={nodeStroke(node.type)} strokeWidth="2" />
                       ) : (
                         <circle cx={node.x} cy={node.y} r="12"
-                          fill={nodeFill(node.type, theme)} stroke={nodeStroke(node.type)} strokeWidth="2" />
+                          fill={nodeFill(theme)} stroke={nodeStroke(node.type)} strokeWidth="2" />
                       )}
                       <text x={node.x} y={node.y + 31} textAnchor="middle"
                         className="fill-stone-500 text-[10px] dark:fill-stone-400">
