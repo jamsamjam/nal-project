@@ -5,21 +5,21 @@
 
 ```mermaid
 flowchart LR
+    A[Layer Selection]
 
-    A[# Layers?]
+    A -->|1-layer| B1[1 ToR]
+    A -->|2-layer| B2[ToR and Agg]
+    A -->|3-layer| B3[Fat-tree Pods]
 
-    A -->|1| L1[1 ToR]
-    L1 --> L1S[# Servers per ToR]
-    L1S --> D[linkrate, delay]
-    D --> C[congestion/queue algo]
-    C --> W[workload: load, msgDist]
+    B1 --> C[Servers per ToR]
+    B2 --> C
+    B3 --> D[Topology Size]
 
-    A -->|2| L2[# ToRs, # Agg]
-    L2 --> L1S
+    C --> E[Link Rate/Delay]
+    D --> E
 
-    A -->|3| L3[ToR + Aggregation + Core]
-    L3 --> L3N[# Pods]
-    L3N --> D
+    E --> F[TCP/Queue]
+    F --> G[Workload]
 ```
 
 ## Quick Start
