@@ -47,6 +47,8 @@ type QueueSelectionInfo = {
   currentPackets: number;
   capacityPackets: number;
   ratio: number;
+  redMinBytes: number | null;
+  redMaxBytes: number | null;
   points: { time: number; size: number; delay: number }[]; // size: queued bytes, delay: avg waiting delay(sec)
 };
 type QueueOverlay = {
@@ -524,10 +526,16 @@ export default function Home() {
         currentPackets,
         capacityPackets,
         ratio,
+        redMinBytes: appliedConfig.queue.queueAlgo === "RedQueueDisc"
+          ? (queueCapacityBytes * appliedConfig.queue.redMinThresholdPct) / 100
+          : null,
+        redMaxBytes: appliedConfig.queue.queueAlgo === "RedQueueDisc"
+          ? (queueCapacityBytes * appliedConfig.queue.redMaxThresholdPct) / 100
+          : null,
         points,
       };
     });
-  }, [selectedQueueCsvIds, selectedQueueStartTimes, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime]);
+  }, [selectedQueueCsvIds, selectedQueueStartTimes, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig.queue.queueAlgo, appliedConfig.queue.redMinThresholdPct, appliedConfig.queue.redMaxThresholdPct]);
 
   const selectedQueueOverlays = useMemo<QueueOverlay[]>(() => {
     const overlays: QueueOverlay[] = [];
@@ -1024,6 +1032,12 @@ export default function Home() {
                     const maxDelay = Math.max(1e-6, ...info.points.map((p) => p.delay));
                     const delayAxis = delayUnitScale(maxDelay);
                     const visiblePoints = info.points.filter((p) => p.time >= info.startTime && p.time <= animTime);
+                    const redMinY = info.redMinBytes === null
+                      ? null
+                      : pad + innerH - (Math.min(info.redMinBytes, maxSize) / maxSize) * innerH;
+                    const redMaxY = info.redMaxBytes === null
+                      ? null
+                      : pad + innerH - (Math.min(info.redMaxBytes, maxSize) / maxSize) * innerH;
                     const sizePath = visiblePoints
                       .map((p, idx) => {
                         const x = pad + (p.time / maxTime) * innerW;
@@ -1073,6 +1087,12 @@ export default function Home() {
                         <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
                           <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
                           <line x1={pad} y1={pad} x2={pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
+                          {redMinY !== null && (
+                            <line x1={pad} y1={redMinY} x2={width - pad} y2={redMinY} stroke="rgb(239, 68, 68)" strokeWidth={1} strokeDasharray="4 3" />
+                          )}
+                          {redMaxY !== null && (
+                            <line x1={pad} y1={redMaxY} x2={width - pad} y2={redMaxY} stroke="rgb(185, 28, 28)" strokeWidth={1} strokeDasharray="4 3" />
+                          )}
                           {info.points.length > 0 && (
                             <>
                               <path d={sizePath} fill="none" stroke="rgb(59, 130, 246)" strokeWidth={1.5} />
@@ -1084,6 +1104,7 @@ export default function Home() {
                         <div className="mt-2 flex gap-3 text-[11px] text-stone-500 dark:text-stone-400">
                           <span>blue: queued size (B)</span>
                           <span>orange: avg wait delay ({delayAxis.unit})</span>
+                          {info.redMinBytes !== null && <span>red: RED min/max</span>}
                         </div>
                       </div>
                     );
