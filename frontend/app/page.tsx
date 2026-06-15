@@ -82,10 +82,14 @@ function formatDelay(delaySeconds: number) {
 function buildQueueEventPoints(pkts: PacketRow[], maxTime: number) {
   if (pkts.length === 0) return [];
 
+  const epsilon = Math.max(maxTime / 1e6, 1e-12);
   const times = new Set<number>([0, maxTime]);
   for (const p of pkts) {
     times.add(p.enqueue_time);
+    times.add(Math.min(maxTime, p.enqueue_time + epsilon));
     times.add(p.dequeue_time);
+    times.add(Math.max(0, p.dequeue_time - epsilon));
+    times.add(Math.min(maxTime, p.dequeue_time + epsilon));
     if (p.dequeue_time > p.enqueue_time) {
       times.add((p.enqueue_time + p.dequeue_time) / 2);
     }
@@ -99,7 +103,7 @@ function buildQueueEventPoints(pkts: PacketRow[], maxTime: number) {
       let waitSum = 0;
       let count = 0;
       for (const p of pkts) {
-        if (p.enqueue_time <= t && p.dequeue_time >= t) {
+        if (p.enqueue_time <= t && t < p.dequeue_time) {
           queuedBytes += p.size;
           waitSum += Math.max(0, t - p.enqueue_time);
           count += 1;
