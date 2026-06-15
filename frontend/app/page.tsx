@@ -83,7 +83,7 @@ function centerTopology(topology: RenderTopology, minWidth = 900, horizontalPadd
 
 function nodeFill(type: Node["type"], theme: "dark" | "light") {
   if (type === "host") {
-    return theme === "dark" ? "rgb(41, 37, 36)" : "rgb(255, 255, 255)";
+    return theme === "dark" ? "rgb(231, 229, 228)" : "rgb(255, 255, 255)";
   }
   return theme === "dark" ? "rgb(28, 25, 23)" : "rgb(255, 255, 255)";
 }
@@ -821,7 +821,7 @@ export default function Home() {
           <header className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-stone-500 dark:text-stone-400">ns-3 simulation</p>
-              <h1 className="mt-3 text-3xl font-semibold">Fat-Tree Topology</h1>
+              <h1 className="mt-3 text-3xl font-semibold">DCN Visualization</h1>
             </div>
 
             <div className="w-fit rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
@@ -868,7 +868,7 @@ export default function Home() {
                   Load: {appliedConfig.traffic.loadPct}%
                 </span>
                 <span className="rounded-full bg-stone-100 px-3 py-1 dark:bg-stone-800">
-                  Workload: {appliedConfig.traffic.workload}
+                  {appliedConfig.traffic.workload}
                 </span>
               </div>
                 <button

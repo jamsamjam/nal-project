@@ -303,7 +303,7 @@ export default function TopologyWizard({ initialConfig, onSubmit, onChange }: Pr
     <div className="rounded-xl border border-stone-300 bg-white p-5 text-stone-900 shadow-sm">
       <div className="mb-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">Topology Wizard</p>
-        <h2 className="text-xl font-bold">Network Topology Configuration</h2>
+        <h2 className="text-xl font-bold">Network Configuration</h2>
       </div>
 
       <div className="mb-4 flex gap-2 text-xs">
@@ -490,10 +490,6 @@ export default function TopologyWizard({ initialConfig, onSubmit, onChange }: Pr
           </button>
         )}
       </div>
-
-      <pre className="mt-4 overflow-x-auto rounded-lg bg-stone-900 p-3 text-xs text-stone-100">
-        {JSON.stringify(config, null, 2)}
-      </pre>
     </div>
   );
 }
