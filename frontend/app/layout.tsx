@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DCN Visualization",
-  description: "ns-3 Topology Visualization",
+  title: "Network Traffic Visualization",
+  description: "ns-3 simulation",
 };
 
 export default function RootLayout({
