@@ -77,6 +77,37 @@ function formatDelay(delaySeconds: number) {
   return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${unit}`;
 }
 
+function buildQueueEventPoints(pkts: PacketRow[], maxTime: number) {
+  if (pkts.length === 0) return [];
+
+  const times = new Set<number>([0, maxTime]);
+  for (const p of pkts) {
+    times.add(p.enqueue_time);
+    times.add(p.dequeue_time);
+    if (p.dequeue_time > p.enqueue_time) {
+      times.add((p.enqueue_time + p.dequeue_time) / 2);
+    }
+  }
+
+  return Array.from(times)
+    .filter((t) => t >= 0 && t <= maxTime)
+    .sort((a, b) => a - b)
+    .map((t) => {
+      let queuedBytes = 0;
+      let waitSum = 0;
+      let count = 0;
+      for (const p of pkts) {
+        if (p.enqueue_time <= t && p.dequeue_time >= t) {
+          queuedBytes += p.size;
+          waitSum += Math.max(0, t - p.enqueue_time);
+          count += 1;
+        }
+      }
+      const avgWaitingDelay = count > 0 ? waitSum / count : 0;
+      return { time: t, size: queuedBytes, delay: avgWaitingDelay };
+    });
+}
+
 const DATA_PACKET_BYTES = 1024;
 const QUEUE_MARKER_OFFSET = 25;
 
@@ -481,23 +512,8 @@ export default function Home() {
       const currentPackets = queuedNow.length;
       const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
       const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
-      const sampleCount = 180;
       const maxTime = simEndTime > 0 ? simEndTime : 1;
-      const points = Array.from({ length: sampleCount + 1 }, (_, i) => {
-        const t = (i / sampleCount) * maxTime;
-        let queuedBytes = 0;
-        let waitSum = 0;
-        let count = 0;
-        for (const p of pkts) {
-          if (p.enqueue_time <= t && p.dequeue_time >= t) {
-            queuedBytes += p.size;
-            waitSum += Math.max(0, t - p.enqueue_time);
-            count += 1;
-          }
-        }
-        const avgWaitingDelay = count > 0 ? waitSum / count : 0;
-        return { time: t, size: queuedBytes, delay: avgWaitingDelay };
-      });
+      const points = buildQueueEventPoints(pkts, maxTime);
       return {
         csvId,
         label: `${fromLabel} → ${toLabel}`,
