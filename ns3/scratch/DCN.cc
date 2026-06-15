@@ -362,7 +362,7 @@ main(int argc, char* argv[])
     std::string queueDiscType = "ns3::FifoQueueDisc";
     double redMinThresholdPct = 20.0;
     double redMaxThresholdPct = 60.0;
-    const double simTime = 10.0;
+    double simTime = 10.0;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("layers", "Topology layers: 1, 2, or 3", layers);
@@ -389,6 +389,27 @@ main(int argc, char* argv[])
         torToAggRate = serverToTorRate;
     if (aggToCoreRate.empty())
         aggToCoreRate = torToAggRate;
+    if (layers < 1 || layers > 3)
+    {
+        std::cerr << "layers must be 1, 2, or 3\n";
+        return 1;
+    }
+
+    if (layers == 3 && (k < 2 || k % 2 != 0))
+    {
+        std::cerr << "k must be even and >= 2\n";
+        return 1;
+    }
+
+    DcnTopo topo(layers, k, torCount, aggCount, serversPerTor);
+    std::vector<FatTreeLink> links = topo.buildLinks();
+    const uint32_t maxHostHops = ComputeMaxHostToHostHops(topo.numHosts, topo.total, links);
+    const double linkDelaySeconds = Time(linkDelay).GetSeconds();
+    const double maxRttSeconds = 2.0 * static_cast<double>(maxHostHops) * linkDelaySeconds;
+    const double referenceDelaySeconds = MilliSeconds(1).GetSeconds();
+    const double referenceRttSeconds = 2.0 * static_cast<double>(maxHostHops) * referenceDelaySeconds;
+    const double minSimTimeSeconds = 1.0;
+    simTime = std::max(minSimTimeSeconds, 10.0 * (maxRttSeconds / referenceRttSeconds));
     std::string runTag = "L" + std::to_string(layers)
         + "_k" + std::to_string(k)
         + "_t" + std::to_string(torCount)
@@ -406,27 +427,10 @@ main(int argc, char* argv[])
         runTag += "_redmin" + FormatCompactDouble(redMinThresholdPct)
             + "_redmax" + FormatCompactDouble(redMaxThresholdPct);
     }
-    
+
     for (auto& c : runTag) if (c == '/' || c == ' ') c = '_';
     std::string csvDir = csvBase + "/" + runTag;
     std::filesystem::create_directories(csvDir);
-
-    if (layers < 1 || layers > 3)
-    {
-        std::cerr << "layers must be 1, 2, or 3\n";
-        return 1;
-    }
-
-    if (layers == 3 && (k < 2 || k % 2 != 0))
-    {
-        std::cerr << "k must be even and >= 2\n";
-        return 1;
-    }
-
-    DcnTopo topo(layers, k, torCount, aggCount, serversPerTor);
-    std::vector<FatTreeLink> links = topo.buildLinks();
-    const uint32_t maxHostHops = ComputeMaxHostToHostHops(topo.numHosts, topo.total, links);
-    const double maxRttSeconds = 2.0 * static_cast<double>(maxHostHops) * Time(linkDelay).GetSeconds();
     const uint64_t bottleneckBps = std::min({DataRate(serverToTorRate).GetBitRate(),
                                              DataRate(torToAggRate).GetBitRate(),
                                              DataRate(aggToCoreRate).GetBitRate()});
@@ -461,6 +465,7 @@ main(int argc, char* argv[])
               << " aggToCoreRate=" << aggToCoreRate
               << " maxHostHops=" << maxHostHops
               << " maxRttSeconds=" << maxRttSeconds
+              << " simTime=" << simTime
               << " queueBytes=" << bdpBytes
               << " redMinThresholdPct=" << redMinThresholdPct
               << " redMaxThresholdPct=" << redMaxThresholdPct

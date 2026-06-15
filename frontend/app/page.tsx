@@ -43,6 +43,7 @@ type QueueSelectionInfo = {
   startTime: number;
   currentBytes: number;
   capacityBytes: number;
+  currentDelay: number;
   currentPackets: number;
   capacityPackets: number;
   ratio: number;
@@ -60,6 +61,20 @@ type QueueOverlay = {
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function delayUnitScale(delaySeconds: number) {
+  const magnitude = Math.max(Math.abs(delaySeconds), 1e-12);
+  if (magnitude >= 1) return { unit: "s", scale: 1 };
+  if (magnitude >= 1e-3) return { unit: "ms", scale: 1e3 };
+  if (magnitude >= 1e-6) return { unit: "us", scale: 1e6 };
+  return { unit: "ns", scale: 1e9 };
+}
+
+function formatDelay(delaySeconds: number) {
+  const { unit, scale } = delayUnitScale(delaySeconds);
+  const value = delaySeconds * scale;
+  return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${unit}`;
 }
 
 const DATA_PACKET_BYTES = 1024;
@@ -252,7 +267,7 @@ function buildTwoLayerTopology(torCount: number, aggCount: number, serversPerTor
 
 export default function Home() {
   const MAX_SELECTED_QUEUES = 4;
-  const playbackRates = [0.01, 0.05, 0.1, 0.5, 1];
+  const playbackRates = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1];
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [k, setK] = useState("4");
   const [loading, setLoading] = useState(false);
@@ -460,6 +475,9 @@ export default function Home() {
       const startTime = selectedQueueStartTimes[csvId] ?? 0;
       const queuedNow = pkts.filter((p) => p.enqueue_time <= animTime && p.dequeue_time >= animTime);
       const currentBytes = queuedNow.reduce((s, p) => s + p.size, 0);
+      const currentDelay = queuedNow.length > 0
+        ? queuedNow.reduce((sum, p) => sum + Math.max(0, animTime - p.enqueue_time), 0) / queuedNow.length
+        : 0;
       const currentPackets = queuedNow.length;
       const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
       const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
@@ -486,6 +504,7 @@ export default function Home() {
         startTime,
         currentBytes,
         capacityBytes: queueCapacityBytes,
+        currentDelay,
         currentPackets,
         capacityPackets,
         ratio,
@@ -987,6 +1006,7 @@ export default function Home() {
                     const maxTime = simEndTime > 0 ? simEndTime : 1;
                     const maxSize = Math.max(1, ...info.points.map((p) => p.size));
                     const maxDelay = Math.max(1e-6, ...info.points.map((p) => p.delay));
+                    const delayAxis = delayUnitScale(maxDelay);
                     const visiblePoints = info.points.filter((p) => p.time >= info.startTime && p.time <= animTime);
                     const sizePath = visiblePoints
                       .map((p, idx) => {
@@ -1031,6 +1051,9 @@ export default function Home() {
                           </span>
                           <span>pkts)</span>
                         </div>
+                        <div className="mt-1 text-xs text-stone-400" style={{ fontVariantNumeric: "tabular-nums" }}>
+                          delay: {formatDelay(info.currentDelay)}
+                        </div>
                         <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
                           <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
                           <line x1={pad} y1={pad} x2={pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
@@ -1044,7 +1067,7 @@ export default function Home() {
                         </svg>
                         <div className="mt-2 flex gap-3 text-[11px] text-stone-500 dark:text-stone-400">
                           <span>blue: queued size (B)</span>
-                          <span>orange: avg wait delay (s)</span>
+                          <span>orange: avg wait delay ({delayAxis.unit})</span>
                         </div>
                       </div>
                     );
