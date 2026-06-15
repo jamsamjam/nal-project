@@ -35,6 +35,7 @@ export type TopologyConfig = {
 };
 
 type Props = {
+  initialConfig?: TopologyConfig;
   onSubmit?: (config: TopologyConfig) => void;
   onChange?: (config: Partial<TopologyConfig>) => void;
 };
@@ -171,29 +172,68 @@ export function getBottleneckLinkRate(config: TopologyConfig): string {
   return formatRateBps(minBps);
 }
 
-export default function TopologyWizard({ onSubmit, onChange }: Props) {
-  const defaultRate = splitRateValue("10Gbps");
-  const defaultDelay = splitDelayValue("1ms");
+function getWizardInitialState(initialConfig?: TopologyConfig) {
+  const config = initialConfig ?? {
+    layers: 1 as LayerType,
+    topology: { type: "single_tor" as const, torCount: 1, serversPerTor: 8 },
+    link: deriveLinkConfig(1, { type: "single_tor", torCount: 1, serversPerTor: 8 }, "10Gbps", 1, "1ms"),
+    queue: {
+      congestionAlgo: congestionAlgos[0],
+      queueAlgo: queueAlgos[0],
+      redMinThresholdPct: 20,
+      redMaxThresholdPct: 60,
+    },
+    traffic: {
+      loadPct: 50,
+      workload: workloadOptions[0],
+    },
+  };
+  const initialRate = splitRateValue(config.link.serverToTorRate);
+  const initialDelay = splitDelayValue(config.link.delay);
+  const topology = config.topology;
 
-  const [layers, setLayers] = useState<LayerType>(1);
+  return {
+    layers: config.layers,
+    torCount: topology.type === "two_layer" ? topology.torCount : 2,
+    aggCount: topology.type === "two_layer" ? topology.aggCount : 2,
+    k: topology.type === "three_layer" ? topology.k : 4,
+    serversPerTor: topology.type === "three_layer" ? 8 : topology.serversPerTor,
+    serverToTorRateValue: initialRate.value,
+    serverToTorRateUnit: initialRate.unit,
+    torOversubRatio: config.link.torOversubRatio,
+    linkDelayValue: initialDelay.value,
+    linkDelayUnit: initialDelay.unit,
+    congestionAlgo: config.queue.congestionAlgo,
+    queueAlgo: config.queue.queueAlgo,
+    redMinThresholdPct: config.queue.redMinThresholdPct,
+    redMaxThresholdPct: config.queue.redMaxThresholdPct,
+    loadPct: config.traffic.loadPct,
+    workload: config.traffic.workload,
+  };
+}
 
-  const [torCount, setTorCount] = useState(2);
-  const [aggCount, setAggCount] = useState(2);
-  const [k, setK] = useState(4);
+export default function TopologyWizard({ initialConfig, onSubmit, onChange }: Props) {
+  const initialState = getWizardInitialState(initialConfig);
 
-  const [serversPerTor, setServersPerTor] = useState(8);
-  const [serverToTorRateValue, setServerToTorRateValue] = useState(defaultRate.value);
-  const [serverToTorRateUnit, setServerToTorRateUnit] = useState<RateUnit>(defaultRate.unit);
-  const [torOversubRatio, setTorOversubRatio] = useState(1);
-  const [linkDelayValue, setLinkDelayValue] = useState(defaultDelay.value);
-  const [linkDelayUnit, setLinkDelayUnit] = useState<DelayUnit>(defaultDelay.unit);
+  const [layers, setLayers] = useState<LayerType>(initialState.layers);
 
-  const [congestionAlgo, setCongestionAlgo] = useState(congestionAlgos[0]);
-  const [queueAlgo, setQueueAlgo] = useState(queueAlgos[0]);
-  const [redMinThresholdPct, setRedMinThresholdPct] = useState(20);
-  const [redMaxThresholdPct, setRedMaxThresholdPct] = useState(60);
-  const [loadPct, setLoadPct] = useState(50);
-  const [workload, setWorkload] = useState(workloadOptions[0]);
+  const [torCount, setTorCount] = useState(initialState.torCount);
+  const [aggCount, setAggCount] = useState(initialState.aggCount);
+  const [k, setK] = useState(initialState.k);
+
+  const [serversPerTor, setServersPerTor] = useState(initialState.serversPerTor);
+  const [serverToTorRateValue, setServerToTorRateValue] = useState(initialState.serverToTorRateValue);
+  const [serverToTorRateUnit, setServerToTorRateUnit] = useState<RateUnit>(initialState.serverToTorRateUnit);
+  const [torOversubRatio, setTorOversubRatio] = useState(initialState.torOversubRatio);
+  const [linkDelayValue, setLinkDelayValue] = useState(initialState.linkDelayValue);
+  const [linkDelayUnit, setLinkDelayUnit] = useState<DelayUnit>(initialState.linkDelayUnit);
+
+  const [congestionAlgo, setCongestionAlgo] = useState(initialState.congestionAlgo);
+  const [queueAlgo, setQueueAlgo] = useState(initialState.queueAlgo);
+  const [redMinThresholdPct, setRedMinThresholdPct] = useState(initialState.redMinThresholdPct);
+  const [redMaxThresholdPct, setRedMaxThresholdPct] = useState(initialState.redMaxThresholdPct);
+  const [loadPct, setLoadPct] = useState(initialState.loadPct);
+  const [workload, setWorkload] = useState(initialState.workload);
 
   const [stepIndex, setStepIndex] = useState(0);
 

@@ -1205,7 +1205,7 @@ export default function Home() {
               </button>
             </div>
 
-            <TopologyWizard onSubmit={applyWizardConfig} />
+            <TopologyWizard initialConfig={appliedConfig} onSubmit={applyWizardConfig} />
           </div>
         </div>
       )}
