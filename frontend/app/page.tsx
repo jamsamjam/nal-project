@@ -809,7 +809,7 @@ export default function Home() {
       const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
       const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
       const points = sampleQueuePoints(queueSeries.points, startTime, animTime);
-      const maxSize = Math.max(1, ...points.map((p) => p.size));
+      const maxSize = Math.max(1, queueCapacityBytes);
       const maxDelay = Math.max(1e-6, ...points.map((p) => p.delay));
       return {
         csvId,
