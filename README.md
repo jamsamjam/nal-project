@@ -27,7 +27,28 @@ cd ns3
 
 Open `http://localhost:3000` and launch simulations.
 
-## How It Works
+## How it was Implemented
+
+```mermaid
+flowchart LR
+
+    A[User Selects<br/>Topology & Parameters]
+    --> B[Backend]
+
+    B --> C["Run ns-3<br/>(if needed)"]
+
+    C --> D[Simulation Results]
+
+    D --> E[Visualization]
+```
+
+| Layer        | Stack |
+|--------------|------------------|
+| Frontend     | React, Next.js, TypeScript |
+| Backend      | FastAPI |
+| Simulation   | ns-3, C++ |
+
+## How it Works
 
 1. Configure the topology and transport settings in the frontend.
 
@@ -53,12 +74,3 @@ flowchart LR
 2. Start a run from the UI.
 3. FastAPI launches ns-3 and stores outputs under `backend/output/<runTag>`.
 4. The frontend fetches completed packet traces and renders queue graphs and playback.
-
-## Tech Stack
-
-| Layer        | Stack |
-|--------------|------------------|
-| Frontend     | React, Next.js |
-| Backend      | FastAPI |
-| Simulation   | ns-3 |
-
