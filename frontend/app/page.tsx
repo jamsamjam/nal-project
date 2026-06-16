@@ -1407,13 +1407,6 @@ export default function Home() {
                         return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
                       })
                       .join(" ");
-                    const delayPath = info.points
-                      .map((p, idx) => {
-                        const x = pad + (p.time / maxTime) * innerW;
-                        const y = pad + innerH - (p.delay / info.maxDelay) * innerH;
-                        return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
-                      })
-                      .join(" ");
                     const currentTime = Math.min(animTime, maxTime);
                     const currentX = pad + (currentTime / maxTime) * innerW;
                     const visibleW = Math.max(0, currentX - pad);
@@ -1429,20 +1422,30 @@ export default function Home() {
                         onClick={() => setFocusedQueueCsvId(info.csvId)}
                       >
                         <p className="truncate font-mono text-xs text-stone-500 dark:text-stone-400">{info.label}</p>
-                        <div className="mt-2 inline-flex items-baseline gap-x-1 text-xs text-stone-400" style={{ fontVariantNumeric: "tabular-nums" }}>
-                          <span className="text-right" style={{ width: "5ch" }}>
+                        <div className="mt-2 inline-flex flex-nowrap items-baseline gap-x-0.5 whitespace-nowrap text-xs text-stone-400" style={{ fontVariantNumeric: "tabular-nums" }}>
+                          <span className="text-right" style={{ width: "7ch" }}>
                             {info.currentBytes}
                           </span>
                           <span>/</span>
-                          <span className="text-right" style={{ width: "5ch" }}>
+                          <span className="text-right" style={{ width: "8ch" }}>
                             {info.capacityBytes}
                           </span>
                           <span>B</span>
                           <span>(</span>
                           <span className="text-right" style={{ width: "5ch" }}>
-                            {info.currentPackets}/{info.capacityPackets}
+                            {info.currentPackets}
+                          </span>
+                          <span>/</span>
+                          <span className="text-right" style={{ width: "5ch" }}>
+                            {info.capacityPackets}
                           </span>
                           <span>pkts)</span>
+                        </div>
+                        <div className="mt-1 inline-flex items-baseline gap-x-1 text-xs text-stone-400" style={{ fontVariantNumeric: "tabular-nums" }}>
+                          <span>queuing delay:</span>
+                          <span className="text-right" style={{ width: "6ch" }}>
+                            {formatDelay(info.currentDelay)}
+                          </span>
                         </div>
                         <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
                           <defs>
@@ -1460,15 +1463,13 @@ export default function Home() {
                           )}
                           {info.points.length > 0 && (
                             <g clipPath={`url(#${chartClipId})`}>
-                              <path d={sizePath} fill="none" stroke="rgb(59, 130, 246)" strokeWidth={1.5} />
-                              <path d={delayPath} fill="none" stroke="rgb(249, 115, 22)" strokeWidth={1.5} />
+                              <path d={sizePath} fill="none" stroke="rgb(249, 115, 22)" strokeWidth={1.5} />
                             </g>
                           )}
                           <line x1={currentX} y1={pad} x2={currentX} y2={height - pad} stroke="rgb(220, 229, 124)" strokeWidth={1} />
                         </svg>
                         <div className="mt-2 flex gap-3 text-[11px] text-stone-500 dark:text-stone-400">
-                          <span>blue: queue size (B)</span>
-                          <span>orange: queueing delay ({delayAxis.unit})</span>
+                          <span>orange: queue size (B)</span>
                           {info.redMinBytes !== null && <span>red: RED min/max</span>}
                         </div>
                       </div>
