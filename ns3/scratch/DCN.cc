@@ -733,7 +733,7 @@ main(int argc, char* argv[])
               << " queueDiscImpl=" << actualQueueDiscType
               << " links=" << links.size() << "\n";
 
-    Config::SetDefault("ns3::Ipv4GlobalRouting::RandomEcmpRouting", BooleanValue(true));
+    Config::SetDefault("ns3::Ipv4GlobalRouting::RandomEcmpRouting", BooleanValue(false));
     Config::SetDefault("ns3::TcpL4Protocol::SocketType", StringValue(tcpType));
     if (useEcn)
     {
