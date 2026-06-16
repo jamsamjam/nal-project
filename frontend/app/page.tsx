@@ -36,6 +36,39 @@ type RunStatus = {
 };
 
 type Dot = { key: string; x: number; y: number };
+type LinkAnimationData = {
+  dequeueEvents: PacketRow[];
+  enqueueEvents: PacketRow[];
+  fromNode: Node;
+  inFlightEndEvents: PacketRow[];
+  inFlightStartEvents: PacketRow[];
+  perpX: number;
+  perpY: number;
+  toNode: Node;
+};
+type LinkAnimationCursor = {
+  activeInFlight: PacketRow[];
+  dequeueIdx: number;
+  depth: number;
+  enqueueIdx: number;
+  inFlightEndIdx: number;
+  inFlightStartIdx: number;
+};
+type QueuePoint = {
+  time: number;
+  size: number;
+  delay: number;
+};
+type QueueSnapshot = {
+  time: number;
+  bytes: number;
+  enqueueTimeSum: number;
+  packets: number;
+};
+type QueueSeries = {
+  points: QueuePoint[];
+  snapshots: QueueSnapshot[];
+};
 type RenderTopology = { nodes: Node[]; links: { from: string; to: string }[]; error: string | null };
 type QueueSelectionInfo = {
   csvId: string;
@@ -49,7 +82,9 @@ type QueueSelectionInfo = {
   ratio: number;
   redMinBytes: number | null;
   redMaxBytes: number | null;
-  points: { time: number; size: number; delay: number }[]; // size: queued bytes, delay: avg waiting delay(sec)
+  maxDelay: number;
+  maxSize: number;
+  points: QueuePoint[]; // size: queued bytes, delay: avg waiting delay(sec)
 };
 type QueueOverlay = {
   csvId: string;
@@ -139,43 +174,149 @@ function formatDelay(delaySeconds: number) {
   return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${unit}`;
 }
 
-function buildQueueEventPoints(pkts: PacketRow[], maxTime: number) {
-  if (pkts.length === 0) return [];
+function averageDelayAtTime(time: number, packets: number, enqueueTimeSum: number) {
+  return packets > 0 ? Math.max(0, time - enqueueTimeSum / packets) : 0;
+}
 
-  const epsilon = Math.max(maxTime / 1e6, 1e-12);
-  const times = new Set<number>([0, maxTime]);
-  for (const p of pkts) {
-    times.add(p.enqueue_time);
-    times.add(Math.min(maxTime, p.enqueue_time + epsilon));
-    times.add(p.dequeue_time);
-    times.add(Math.max(0, p.dequeue_time - epsilon));
-    times.add(Math.min(maxTime, p.dequeue_time + epsilon));
-    if (p.dequeue_time > p.enqueue_time) {
-      times.add((p.enqueue_time + p.dequeue_time) / 2);
+function findLastSnapshotAtOrBeforeTime(snapshots: QueueSnapshot[], time: number) {
+  let lo = 0;
+  let hi = snapshots.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (snapshots[mid].time <= time) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
     }
   }
+  return snapshots[Math.max(0, lo - 1)];
+}
 
-  return Array.from(times)
-    .filter((t) => t >= 0 && t <= maxTime)
-    .sort((a, b) => a - b)
-    .map((t) => {
-      let queuedBytes = 0;
-      let waitSum = 0;
-      let count = 0;
-      for (const p of pkts) {
-        if (p.enqueue_time <= t && t < p.dequeue_time) {
-          queuedBytes += p.size;
-          waitSum += Math.max(0, t - p.enqueue_time);
-          count += 1;
-        }
-      }
-      const avgWaitingDelay = count > 0 ? waitSum / count : 0;
-      return { time: t, size: queuedBytes, delay: avgWaitingDelay };
+function lowerBoundQueuePoint(points: QueuePoint[], time: number) {
+  let lo = 0;
+  let hi = points.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (points[mid].time < time) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function upperBoundQueuePoint(points: QueuePoint[], time: number) {
+  let lo = 0;
+  let hi = points.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (points[mid].time <= time) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function buildQueueSeries(pkts: PacketRow[], maxTime: number): QueueSeries {
+  if (pkts.length === 0) {
+    return {
+      points: [{ time: 0, size: 0, delay: 0 }, { time: maxTime, size: 0, delay: 0 }],
+      snapshots: [{ time: 0, bytes: 0, enqueueTimeSum: 0, packets: 0 }],
+    };
+  }
+
+  const events: Array<{ time: number; deltaBytes: number; deltaEnqueueTimeSum: number; deltaPackets: number }> = [];
+  for (const p of pkts) {
+    events.push({
+      time: p.enqueue_time,
+      deltaBytes: p.size,
+      deltaEnqueueTimeSum: p.enqueue_time,
+      deltaPackets: 1,
     });
+    events.push({
+      time: p.dequeue_time,
+      deltaBytes: -p.size,
+      deltaEnqueueTimeSum: -p.enqueue_time,
+      deltaPackets: -1,
+    });
+  }
+  events.sort((a, b) => a.time - b.time);
+
+  let bytes = 0;
+  let packets = 0;
+  let enqueueTimeSum = 0;
+  let idx = 0;
+
+  const points: QueuePoint[] = [{ time: 0, size: 0, delay: 0 }];
+  const snapshots: QueueSnapshot[] = [{ time: 0, bytes: 0, enqueueTimeSum: 0, packets: 0 }];
+
+  while (idx < events.length) {
+    const time = events[idx].time;
+    if (time > maxTime) break;
+
+    points.push({
+      time,
+      size: bytes,
+      delay: averageDelayAtTime(time, packets, enqueueTimeSum),
+    });
+
+    let deltaBytes = 0;
+    let deltaPackets = 0;
+    let deltaEnqueueTimeSum = 0;
+    while (idx < events.length && events[idx].time === time) {
+      deltaBytes += events[idx].deltaBytes;
+      deltaPackets += events[idx].deltaPackets;
+      deltaEnqueueTimeSum += events[idx].deltaEnqueueTimeSum;
+      idx += 1;
+    }
+
+    bytes = Math.max(0, bytes + deltaBytes);
+    packets = Math.max(0, packets + deltaPackets);
+    enqueueTimeSum += deltaEnqueueTimeSum;
+
+    const delay = averageDelayAtTime(time, packets, enqueueTimeSum);
+    points.push({ time, size: bytes, delay });
+    snapshots.push({ time, bytes, enqueueTimeSum, packets });
+  }
+
+  const finalSnapshot = snapshots[snapshots.length - 1];
+  if (points[points.length - 1]?.time !== maxTime) {
+    points.push({
+      time: maxTime,
+      size: finalSnapshot.bytes,
+      delay: averageDelayAtTime(maxTime, finalSnapshot.packets, finalSnapshot.enqueueTimeSum),
+    });
+  }
+
+  return { points, snapshots };
+}
+
+function sampleQueuePoints(points: QueuePoint[], startTime: number, endTime: number, maxPoints = 400) {
+  if (points.length === 0 || endTime < startTime) return [] as QueuePoint[];
+
+  const startIdx = Math.max(0, lowerBoundQueuePoint(points, startTime) - 1);
+  const endExclusive = upperBoundQueuePoint(points, endTime);
+  const relevant = points.slice(startIdx, endExclusive);
+  if (relevant.length <= maxPoints) return relevant;
+
+  const sampled: QueuePoint[] = [];
+  const stride = Math.ceil(relevant.length / maxPoints);
+  for (let i = 0; i < relevant.length; i += stride) {
+    sampled.push(relevant[i]);
+  }
+  const lastPoint = relevant[relevant.length - 1];
+  if (sampled[sampled.length - 1] !== lastPoint) {
+    sampled.push(lastPoint);
+  }
+  return sampled;
 }
 
 const DATA_PACKET_BYTES = 1024;
 const QUEUE_MARKER_OFFSET = 25;
+const MAX_PACKET_DOTS_PER_LINK = 64;
 
 function queueMarkerPosition(fromNode: Node, toNode: Node, offset = QUEUE_MARKER_OFFSET) {
   const dx = toNode.x - fromNode.x;
@@ -388,9 +529,12 @@ export default function Home() {
   const [focusedQueueCsvId, setFocusedQueueCsvId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [topologyConfig, setTopologyConfig] = useState<TopologyConfig | null>(null);
-
   const animRaf = useRef<number | null>(null);
   const animStartSim = useRef(0);
+  const animationCursorRef = useRef<{
+    cursors: Record<string, LinkAnimationCursor>;
+    time: number;
+  } | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem("theme");
@@ -519,76 +663,154 @@ export default function Home() {
     [appliedConfig, topology]
   );
 
-  // per-frame: packet dots + current queue depths
-  const { dots: packetDots, depths: linkQueueDepths } = useMemo(() => {
-    const dots: Dot[] = [];
-    const depths: Record<string, number> = {}; // link `string` -> current queue byte
-
+  const linkAnimationData = useMemo<Record<string, LinkAnimationData>>(() => {
+    const dataByLink: Record<string, LinkAnimationData> = {};
     for (const [linkId, pkts] of Object.entries(packets)) {
       const ids = parseLinkSvgIds(linkId, resolveNumericNodeId);
       const fromNode = ids ? nodeMap.get(ids[0]) : null;
       const toNode = ids ? nodeMap.get(ids[1]) : null;
-      let depth = 0;
+      if (!fromNode || !toNode) continue;
 
       // Each directed link gets its own side of the shared physical link.
       let perpX = 0;
       let perpY = 0;
-      if (fromNode && toNode) {
-        const parts = linkId.split("-");
-        const fromNum = parseInt(parts[0]);
-        const toNum = parseInt(parts[1]);
-        const isForwardOnCanonicalLink = fromNum < toNum;
-        const canonicalFrom = isForwardOnCanonicalLink ? fromNode : toNode;
-        const canonicalTo = isForwardOnCanonicalLink ? toNode : fromNode;
-        const dx = canonicalTo.x - canonicalFrom.x;
-        const dy = canonicalTo.y - canonicalFrom.y;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len > 0) {
-          const offsetSign = isForwardOnCanonicalLink ? 1 : -1;
-          perpX = (-dy / len) * offsetSign * 5;
-          perpY = (dx / len) * offsetSign * 5;
-        }
+      const parts = linkId.split("-");
+      const fromNum = parseInt(parts[0]);
+      const toNum = parseInt(parts[1]);
+      const isForwardOnCanonicalLink = fromNum < toNum;
+      const canonicalFrom = isForwardOnCanonicalLink ? fromNode : toNode;
+      const canonicalTo = isForwardOnCanonicalLink ? toNode : fromNode;
+      const dx = canonicalTo.x - canonicalFrom.x;
+      const dy = canonicalTo.y - canonicalFrom.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len > 0) {
+        const offsetSign = isForwardOnCanonicalLink ? 1 : -1;
+        perpX = (-dy / len) * offsetSign * 5;
+        perpY = (dx / len) * offsetSign * 5;
       }
 
-      for (const p of pkts) {
-        if (p.enqueue_time <= animTime && p.dequeue_time >= animTime) {
-          depth += p.size;
-        }
-
-        if (p.dequeue_time <= animTime && p.arrive_time >= animTime && fromNode && toNode) {
-          const dur = p.arrive_time - p.dequeue_time;
-          const progress = Math.min((animTime - p.dequeue_time) / dur, 1);
-          dots.push({
-            key: `${linkId}-${p.id}`,
-            x: fromNode.x + (toNode.x - fromNode.x) * progress + perpX,
-            y: fromNode.y + (toNode.y - fromNode.y) * progress + perpY,
-          });
-        }
-      }
-      depths[linkId] = depth;
+      dataByLink[linkId] = {
+        dequeueEvents: [...pkts].sort((a, b) => a.dequeue_time - b.dequeue_time),
+        enqueueEvents: [...pkts].sort((a, b) => a.enqueue_time - b.enqueue_time),
+        fromNode,
+        inFlightEndEvents: [...pkts].sort((a, b) => a.arrive_time - b.arrive_time),
+        inFlightStartEvents: [...pkts].sort((a, b) => a.dequeue_time - b.dequeue_time),
+        perpX,
+        perpY,
+        toNode,
+      };
     }
-    return { dots, depths };
-  }, [animTime, packets, nodeMap, resolveNumericNodeId]);
+    return dataByLink;
+  }, [packets, nodeMap, resolveNumericNodeId]);
+
+  const { packetDots, linkQueueDepths } = useMemo(() => {
+    const shouldRebuild =
+      animationCursorRef.current === null ||
+      animTime < animationCursorRef.current.time ||
+      animTime === 0;
+
+    const existingAnimationState = animationCursorRef.current;
+    const cursors = shouldRebuild
+      ? Object.fromEntries(
+          Object.keys(linkAnimationData).map((linkId) => [
+            linkId,
+            {
+              activeInFlight: [],
+              dequeueIdx: 0,
+              depth: 0,
+              enqueueIdx: 0,
+              inFlightEndIdx: 0,
+              inFlightStartIdx: 0,
+            } satisfies LinkAnimationCursor,
+          ])
+        )
+      : existingAnimationState!.cursors;
+
+    const dots: Dot[] = [];
+    const depths: Record<string, number> = {};
+
+    for (const [linkId, data] of Object.entries(linkAnimationData)) {
+      const cursor = cursors[linkId];
+
+      while (
+        cursor.enqueueIdx < data.enqueueEvents.length &&
+        data.enqueueEvents[cursor.enqueueIdx].enqueue_time <= animTime
+      ) {
+        cursor.depth += data.enqueueEvents[cursor.enqueueIdx].size;
+        cursor.enqueueIdx += 1;
+      }
+
+      while (
+        cursor.dequeueIdx < data.dequeueEvents.length &&
+        data.dequeueEvents[cursor.dequeueIdx].dequeue_time <= animTime
+      ) {
+        cursor.depth -= data.dequeueEvents[cursor.dequeueIdx].size;
+        cursor.dequeueIdx += 1;
+      }
+
+      while (
+        cursor.inFlightStartIdx < data.inFlightStartEvents.length &&
+        data.inFlightStartEvents[cursor.inFlightStartIdx].dequeue_time <= animTime
+      ) {
+        cursor.activeInFlight.push(data.inFlightStartEvents[cursor.inFlightStartIdx]);
+        cursor.inFlightStartIdx += 1;
+      }
+
+      while (
+        cursor.inFlightEndIdx < data.inFlightEndEvents.length &&
+        data.inFlightEndEvents[cursor.inFlightEndIdx].arrive_time <= animTime
+      ) {
+        const packetId = data.inFlightEndEvents[cursor.inFlightEndIdx].id;
+        const removeIdx = cursor.activeInFlight.findIndex((packet) => packet.id === packetId);
+        if (removeIdx !== -1) {
+          cursor.activeInFlight.splice(removeIdx, 1);
+        }
+        cursor.inFlightEndIdx += 1;
+      }
+
+      depths[linkId] = Math.max(0, cursor.depth);
+
+      const packetDotStride = Math.max(1, Math.ceil(cursor.activeInFlight.length / MAX_PACKET_DOTS_PER_LINK));
+      for (let i = 0; i < cursor.activeInFlight.length; i += packetDotStride) {
+        const packet = cursor.activeInFlight[i];
+        const dur = packet.arrive_time - packet.dequeue_time;
+        const progress = dur > 0 ? Math.min((animTime - packet.dequeue_time) / dur, 1) : 1;
+        dots.push({
+          key: `${linkId}-${packet.id}`,
+          x: data.fromNode.x + (data.toNode.x - data.fromNode.x) * progress + data.perpX,
+          y: data.fromNode.y + (data.toNode.y - data.fromNode.y) * progress + data.perpY,
+        });
+      }
+    }
+
+    animationCursorRef.current = { cursors, time: animTime };
+    return { packetDots: dots, linkQueueDepths: depths };
+  }, [animTime, linkAnimationData]);
 
   const hasPackets = Object.keys(packets).length > 0;
+  const queueSeriesByLink = useMemo<Record<string, QueueSeries>>(() => {
+    const maxTime = simEndTime > 0 ? simEndTime : 1;
+    return Object.fromEntries(
+      Object.entries(packets).map(([linkId, pkts]) => [linkId, buildQueueSeries(pkts, maxTime)])
+    );
+  }, [packets, simEndTime]);
 
   const selectedInfos = useMemo<QueueSelectionInfo[]>(() => {
     return selectedQueueCsvIds.map((csvId) => {
-      const pkts = packets[csvId] ?? [];
+      const queueSeries = queueSeriesByLink[csvId] ?? buildQueueSeries([], simEndTime > 0 ? simEndTime : 1);
       const parts = csvId.split("-");
       const fromLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[0])))?.label ?? parts[0];
       const toLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[1])))?.label ?? parts[1];
       const startTime = selectedQueueStartTimes[csvId] ?? 0;
-      const queuedNow = pkts.filter((p) => p.enqueue_time <= animTime && p.dequeue_time >= animTime);
-      const currentBytes = queuedNow.reduce((s, p) => s + p.size, 0);
-      const currentDelay = queuedNow.length > 0
-        ? queuedNow.reduce((sum, p) => sum + Math.max(0, animTime - p.enqueue_time), 0) / queuedNow.length
-        : 0;
-      const currentPackets = queuedNow.length;
+      const currentSnapshot = findLastSnapshotAtOrBeforeTime(queueSeries.snapshots, animTime);
+      const currentBytes = currentSnapshot.bytes;
+      const currentPackets = currentSnapshot.packets;
+      const currentDelay = averageDelayAtTime(animTime, currentSnapshot.packets, currentSnapshot.enqueueTimeSum);
       const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
       const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
-      const maxTime = simEndTime > 0 ? simEndTime : 1;
-      const points = buildQueueEventPoints(pkts, maxTime);
+      const points = sampleQueuePoints(queueSeries.points, startTime, animTime);
+      const maxSize = Math.max(1, ...points.map((p) => p.size));
+      const maxDelay = Math.max(1e-6, ...points.map((p) => p.delay));
       return {
         csvId,
         label: `${fromLabel} → ${toLabel}`,
@@ -605,10 +827,12 @@ export default function Home() {
         redMaxBytes: appliedConfig.queue.queueAlgo === "RedQueueDisc"
           ? (queueCapacityBytes * appliedConfig.queue.redMaxThresholdPct) / 100
           : null,
+        maxDelay,
+        maxSize,
         points,
       };
     });
-  }, [selectedQueueCsvIds, selectedQueueStartTimes, packets, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig.queue.queueAlgo, appliedConfig.queue.redMinThresholdPct, appliedConfig.queue.redMaxThresholdPct]);
+  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig.queue.queueAlgo, appliedConfig.queue.redMinThresholdPct, appliedConfig.queue.redMaxThresholdPct]);
 
   const selectedQueueOverlays = useMemo<QueueOverlay[]>(() => {
     const overlays: QueueOverlay[] = [];
@@ -1115,27 +1339,24 @@ export default function Home() {
                     const innerW = width - pad * 2;
                     const innerH = height - pad * 2;
                     const maxTime = simEndTime > 0 ? simEndTime : 1;
-                    const maxSize = Math.max(1, ...info.points.map((p) => p.size));
-                    const maxDelay = Math.max(1e-6, ...info.points.map((p) => p.delay));
-                    const delayAxis = delayUnitScale(maxDelay);
-                    const visiblePoints = info.points.filter((p) => p.time >= info.startTime && p.time <= animTime);
+                    const delayAxis = delayUnitScale(info.maxDelay);
                     const redMinY = info.redMinBytes === null
                       ? null
-                      : pad + innerH - (Math.min(info.redMinBytes, maxSize) / maxSize) * innerH;
+                      : pad + innerH - (Math.min(info.redMinBytes, info.maxSize) / info.maxSize) * innerH;
                     const redMaxY = info.redMaxBytes === null
                       ? null
-                      : pad + innerH - (Math.min(info.redMaxBytes, maxSize) / maxSize) * innerH;
-                    const sizePath = visiblePoints
+                      : pad + innerH - (Math.min(info.redMaxBytes, info.maxSize) / info.maxSize) * innerH;
+                    const sizePath = info.points
                       .map((p, idx) => {
                         const x = pad + (p.time / maxTime) * innerW;
-                        const y = pad + innerH - (p.size / maxSize) * innerH;
+                        const y = pad + innerH - (p.size / info.maxSize) * innerH;
                         return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
                       })
                       .join(" ");
-                    const delayPath = visiblePoints
+                    const delayPath = info.points
                       .map((p, idx) => {
                         const x = pad + (p.time / maxTime) * innerW;
-                        const y = pad + innerH - (p.delay / maxDelay) * innerH;
+                        const y = pad + innerH - (p.delay / info.maxDelay) * innerH;
                         return `${idx === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
                       })
                       .join(" ");
