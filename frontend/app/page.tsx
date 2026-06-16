@@ -566,6 +566,38 @@ export default function Home() {
     document.documentElement.classList.toggle("dark", next === "dark");
   }
 
+  function toggleQueueSelection(csvId: string) {
+    setSelectedQueueCsvIds((prev) => {
+      if (prev.includes(csvId)) {
+        if (focusedQueueCsvId === csvId) setFocusedQueueCsvId(null);
+        setSelectedQueueStartTimes((times) => {
+          const next = { ...times };
+          delete next[csvId];
+          return next;
+        });
+        return prev.filter((id) => id !== csvId);
+      }
+
+      setSelectedQueueStartTimes((times) => (
+        csvId in times ? times : { ...times, [csvId]: animTime }
+      ));
+      const next = [...prev, csvId];
+      setFocusedQueueCsvId(csvId);
+      if (next.length <= MAX_SELECTED_QUEUES) return next;
+
+      const trimmed = next.slice(next.length - MAX_SELECTED_QUEUES);
+      const removedIds = next.filter((id) => !trimmed.includes(id));
+      setSelectedQueueStartTimes((times) => {
+        const nextTimes = { ...times };
+        for (const removedId of removedIds) {
+          delete nextTimes[removedId];
+        }
+        return nextTimes;
+      });
+      return trimmed;
+    });
+  }
+
   const numericK = Number(k);
   const svgHeight = 500;
   const startX = 80;
@@ -1293,7 +1325,7 @@ export default function Home() {
                         style={{ cursor: "pointer" }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setFocusedQueueCsvId(q.csvId);
+                          toggleQueueSelection(q.csvId);
                         }}
                       />
                     </g>
@@ -1347,33 +1379,7 @@ export default function Home() {
                         style={{ cursor: "pointer" }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setSelectedQueueCsvIds((prev) => {
-                            if (prev.includes(csvId)) {
-                              if (focusedQueueCsvId === csvId) setFocusedQueueCsvId(null);
-                              setSelectedQueueStartTimes((times) => {
-                                const next = { ...times };
-                                delete next[csvId];
-                                return next;
-                              });
-                              return prev.filter((id) => id !== csvId);
-                            }
-                            setSelectedQueueStartTimes((times) => (
-                              csvId in times ? times : { ...times, [csvId]: animTime }
-                            ));
-                            const next = [...prev, csvId];
-                            setFocusedQueueCsvId(csvId);
-                            if (next.length <= MAX_SELECTED_QUEUES) return next;
-                            const trimmed = next.slice(next.length - MAX_SELECTED_QUEUES);
-                            const removedIds = next.filter((id) => !trimmed.includes(id));
-                            setSelectedQueueStartTimes((times) => {
-                              const nextTimes = { ...times };
-                              for (const removedId of removedIds) {
-                                delete nextTimes[removedId];
-                              }
-                              return nextTimes;
-                            });
-                            return trimmed;
-                          });
+                          toggleQueueSelection(csvId);
                         }}
                       />
                     );
