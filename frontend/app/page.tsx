@@ -827,6 +827,21 @@ export default function Home() {
     );
   }, [packets, simEndTime, queueLinkRateByLink, appliedConfig]);
 
+  const sampledQueuePointsByLink = useMemo<Record<string, QueuePoint[]>>(() => {
+    const maxTime = simEndTime > 0 ? simEndTime : 1;
+    return Object.fromEntries(
+      selectedQueueCsvIds.map((csvId) => {
+        const queueSeries = queueSeriesByLink[csvId] ?? buildQueueSeries(
+          [],
+          maxTime,
+          queueLinkRateByLink[csvId] ?? parseLinkRateBps(getBottleneckLinkRate(appliedConfig))
+        );
+        const startTime = selectedQueueStartTimes[csvId] ?? 0;
+        return [csvId, sampleQueuePoints(queueSeries.points, startTime, maxTime)];
+      })
+    );
+  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, queueLinkRateByLink, simEndTime, appliedConfig]);
+
   const selectedInfos = useMemo<QueueSelectionInfo[]>(() => {
     return selectedQueueCsvIds.map((csvId) => {
       const queueSeries = queueSeriesByLink[csvId] ?? buildQueueSeries(
@@ -841,15 +856,14 @@ export default function Home() {
       const currentSnapshot = findLastSnapshotAtOrBeforeTime(queueSeries.snapshots, animTime);
       const currentBytes = currentSnapshot.bytes;
       const currentPackets = currentSnapshot.packets;
-      const currentDelay = queueingDelay(
-        currentSnapshot.bytes,
-        queueLinkRateByLink[csvId] ?? parseLinkRateBps(getBottleneckLinkRate(appliedConfig))
-      );
+      const linkRateBps = queueLinkRateByLink[csvId] ?? parseLinkRateBps(getBottleneckLinkRate(appliedConfig));
+      const currentDelay = queueingDelay(currentSnapshot.bytes, linkRateBps);
+      const maxTime = simEndTime > 0 ? simEndTime : 1;
       const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
       const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
-      const points = sampleQueuePoints(queueSeries.points, startTime, animTime);
+      const points = sampledQueuePointsByLink[csvId] ?? sampleQueuePoints(queueSeries.points, startTime, maxTime);
       const maxSize = Math.max(1, queueCapacityBytes);
-      const maxDelay = Math.max(1e-6, ...points.map((p) => p.delay));
+      const maxDelay = Math.max(1e-6, (queueCapacityBytes * 8) / linkRateBps);
       return {
         csvId,
         label: `${fromLabel} → ${toLabel}`,
@@ -871,7 +885,7 @@ export default function Home() {
         points,
       };
     });
-  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, queueLinkRateByLink, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig]);
+  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, sampledQueuePointsByLink, queueLinkRateByLink, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig]);
 
   const selectedQueueOverlays = useMemo<QueueOverlay[]>(() => {
     const overlays: QueueOverlay[] = [];
@@ -1379,6 +1393,7 @@ export default function Home() {
                     const innerH = height - pad * 2;
                     const maxTime = simEndTime > 0 ? simEndTime : 1;
                     const delayAxis = delayUnitScale(info.maxDelay);
+                    const chartClipId = `queue-chart-clip-${info.csvId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
                     const redMinY = info.redMinBytes === null
                       ? null
                       : pad + innerH - (Math.min(info.redMinBytes, info.maxSize) / info.maxSize) * innerH;
@@ -1401,6 +1416,7 @@ export default function Home() {
                       .join(" ");
                     const currentTime = Math.min(animTime, maxTime);
                     const currentX = pad + (currentTime / maxTime) * innerW;
+                    const visibleW = Math.max(0, currentX - pad);
 
                     return (
                       <div
@@ -1429,6 +1445,11 @@ export default function Home() {
                           <span>pkts)</span>
                         </div>
                         <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
+                          <defs>
+                            <clipPath id={chartClipId}>
+                              <rect x={pad} y={pad} width={visibleW} height={innerH} />
+                            </clipPath>
+                          </defs>
                           <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
                           <line x1={pad} y1={pad} x2={pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
                           {redMinY !== null && (
@@ -1438,10 +1459,10 @@ export default function Home() {
                             <line x1={pad} y1={redMaxY} x2={width - pad} y2={redMaxY} stroke="rgb(185, 28, 28)" strokeWidth={1} strokeDasharray="4 3" />
                           )}
                           {info.points.length > 0 && (
-                            <>
+                            <g clipPath={`url(#${chartClipId})`}>
                               <path d={sizePath} fill="none" stroke="rgb(59, 130, 246)" strokeWidth={1.5} />
                               <path d={delayPath} fill="none" stroke="rgb(249, 115, 22)" strokeWidth={1.5} />
-                            </>
+                            </g>
                           )}
                           <line x1={currentX} y1={pad} x2={currentX} y2={height - pad} stroke="rgb(220, 229, 124)" strokeWidth={1} />
                         </svg>
