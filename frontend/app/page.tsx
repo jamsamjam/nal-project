@@ -1197,7 +1197,7 @@ export default function Home() {
                   const ratio = hasPackets && capacityBytes > 0 ? depth / capacityBytes : 0;
                   const isBottleneck = ratio > 0.8;
                   const stroke = queueColor(ratio, lineStroke);
-                  const strokeWidth = hasPackets && depth > 0 ? 1 + ratio * 2.5 : 1;
+                  const strokeWidth = hasPackets && depth > 0 ? Math.min(3.5, 1 + ratio * 2.5) : 1;
 
                   return (
                     <g key={`${link.from}-${link.to}-${i}`}>
