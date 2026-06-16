@@ -1341,9 +1341,9 @@ export default function Home() {
                     return (
                       <rect key={csvId}
                         x={marker.x - 7} y={marker.y - 5} width={14} height={10} rx={2}
-                        fill="white"
-                        stroke="none"
-                        strokeWidth={0}
+                        fill={theme === "dark" ? "white" : "rgb(229, 231, 235)"}
+                        stroke={theme === "dark" ? "none" : "rgb(156, 163, 175)"}
+                        strokeWidth={theme === "dark" ? 0 : 1}
                         style={{ cursor: "pointer" }}
                         onClick={(e) => {
                           e.stopPropagation();
