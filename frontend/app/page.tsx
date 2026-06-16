@@ -89,6 +89,42 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function parsePacketCsv(csvText: string): PacketRow[] {
+  const rows = csvText.trim().split("\n");
+  if (rows.length <= 1) return [];
+
+  const packets: PacketRow[] = [];
+  for (const row of rows.slice(1)) {
+    if (!row.trim()) continue;
+    const [id, size, enqueue_time, dequeue_time, arrive_time] = row.split(",");
+    const parsedId = Number(id);
+    const parsedSize = Number(size);
+    const parsedEnqueue = Number(enqueue_time);
+    const parsedDequeue = Number(dequeue_time);
+    const parsedArrive = Number(arrive_time);
+
+    if (
+      Number.isNaN(parsedId) ||
+      Number.isNaN(parsedSize) ||
+      Number.isNaN(parsedEnqueue) ||
+      Number.isNaN(parsedDequeue) ||
+      Number.isNaN(parsedArrive)
+    ) {
+      continue;
+    }
+
+    packets.push({
+      id: parsedId,
+      size: parsedSize,
+      enqueue_time: parsedEnqueue / 1e9,
+      dequeue_time: parsedDequeue / 1e9,
+      arrive_time: parsedArrive / 1e9,
+    });
+  }
+
+  return packets;
+}
+
 function delayUnitScale(delaySeconds: number) {
   const magnitude = Math.max(Math.abs(delaySeconds), 1e-12);
   if (magnitude >= 1) return { unit: "s", scale: 1 };
@@ -634,8 +670,8 @@ export default function Home() {
       data.linkIds.map(async (linkId) => {
         const r = await fetch(`/results/${data.runTag}/link/${linkId}`);
         if (r.ok) {
-          const d = await r.json();
-          fetched[linkId] = d.packets;
+          const csvText = await r.text();
+          fetched[linkId] = parsePacketCsv(csvText);
         }
       })
     );
