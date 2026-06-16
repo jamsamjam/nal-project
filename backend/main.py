@@ -202,13 +202,15 @@ def run(req: RunRequest):
 
 @app.get("/runs/{run_tag}/status")
 def get_run_status(run_tag: str):
+    run_dir = output_path / run_tag
+    if is_completed_run_dir(run_dir):
+        completed = RunStatus(runTag=run_tag, status="completed", linkIds=get_link_ids(run_tag))
+        set_job_status(run_tag, "completed", link_ids=completed.linkIds)
+        return completed
+
     status = get_job_status(run_tag)
     if status and status.status in {"queued", "running", "failed"}:
         return status
-
-    run_dir = output_path / run_tag
-    if is_completed_run_dir(run_dir):
-        return RunStatus(runTag=run_tag, status="completed", linkIds=get_link_ids(run_tag))
 
     if status is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_tag}' not found.")
