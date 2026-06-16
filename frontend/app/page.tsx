@@ -62,7 +62,6 @@ type QueuePoint = {
 type QueueSnapshot = {
   time: number;
   bytes: number;
-  enqueueTimeSum: number;
   packets: number;
 };
 type QueueSeries = {
@@ -174,8 +173,9 @@ function formatDelay(delaySeconds: number) {
   return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${unit}`;
 }
 
-function averageDelayAtTime(time: number, packets: number, enqueueTimeSum: number) {
-  return packets > 0 ? Math.max(0, time - enqueueTimeSum / packets) : 0;
+function queueingDelay(bytes: number, linkRateBps: number) {
+  if (!Number.isFinite(linkRateBps) || linkRateBps <= 0) return 0;
+  return (bytes * 8) / linkRateBps;
 }
 
 function findLastSnapshotAtOrBeforeTime(snapshots: QueueSnapshot[], time: number) {
@@ -220,26 +220,24 @@ function upperBoundQueuePoint(points: QueuePoint[], time: number) {
   return lo;
 }
 
-function buildQueueSeries(pkts: PacketRow[], maxTime: number): QueueSeries {
+function buildQueueSeries(pkts: PacketRow[], maxTime: number, linkRateBps: number): QueueSeries {
   if (pkts.length === 0) {
     return {
       points: [{ time: 0, size: 0, delay: 0 }, { time: maxTime, size: 0, delay: 0 }],
-      snapshots: [{ time: 0, bytes: 0, enqueueTimeSum: 0, packets: 0 }],
+      snapshots: [{ time: 0, bytes: 0, packets: 0 }],
     };
   }
 
-  const events: Array<{ time: number; deltaBytes: number; deltaEnqueueTimeSum: number; deltaPackets: number }> = [];
+  const events: Array<{ time: number; deltaBytes: number; deltaPackets: number }> = [];
   for (const p of pkts) {
     events.push({
       time: p.enqueue_time,
       deltaBytes: p.size,
-      deltaEnqueueTimeSum: p.enqueue_time,
       deltaPackets: 1,
     });
     events.push({
       time: p.dequeue_time,
       deltaBytes: -p.size,
-      deltaEnqueueTimeSum: -p.enqueue_time,
       deltaPackets: -1,
     });
   }
@@ -247,11 +245,10 @@ function buildQueueSeries(pkts: PacketRow[], maxTime: number): QueueSeries {
 
   let bytes = 0;
   let packets = 0;
-  let enqueueTimeSum = 0;
   let idx = 0;
 
   const points: QueuePoint[] = [{ time: 0, size: 0, delay: 0 }];
-  const snapshots: QueueSnapshot[] = [{ time: 0, bytes: 0, enqueueTimeSum: 0, packets: 0 }];
+  const snapshots: QueueSnapshot[] = [{ time: 0, bytes: 0, packets: 0 }];
 
   while (idx < events.length) {
     const time = events[idx].time;
@@ -260,26 +257,23 @@ function buildQueueSeries(pkts: PacketRow[], maxTime: number): QueueSeries {
     points.push({
       time,
       size: bytes,
-      delay: averageDelayAtTime(time, packets, enqueueTimeSum),
+      delay: queueingDelay(bytes, linkRateBps),
     });
 
     let deltaBytes = 0;
     let deltaPackets = 0;
-    let deltaEnqueueTimeSum = 0;
     while (idx < events.length && events[idx].time === time) {
       deltaBytes += events[idx].deltaBytes;
       deltaPackets += events[idx].deltaPackets;
-      deltaEnqueueTimeSum += events[idx].deltaEnqueueTimeSum;
       idx += 1;
     }
 
     bytes = Math.max(0, bytes + deltaBytes);
     packets = Math.max(0, packets + deltaPackets);
-    enqueueTimeSum += deltaEnqueueTimeSum;
 
-    const delay = averageDelayAtTime(time, packets, enqueueTimeSum);
+    const delay = queueingDelay(bytes, linkRateBps);
     points.push({ time, size: bytes, delay });
-    snapshots.push({ time, bytes, enqueueTimeSum, packets });
+    snapshots.push({ time, bytes, packets });
   }
 
   const finalSnapshot = snapshots[snapshots.length - 1];
@@ -287,7 +281,7 @@ function buildQueueSeries(pkts: PacketRow[], maxTime: number): QueueSeries {
     points.push({
       time: maxTime,
       size: finalSnapshot.bytes,
-      delay: averageDelayAtTime(maxTime, finalSnapshot.packets, finalSnapshot.enqueueTimeSum),
+      delay: queueingDelay(finalSnapshot.bytes, linkRateBps),
     });
   }
 
@@ -450,6 +444,28 @@ function computeMaxRttSeconds(topology: RenderTopology, linkDelaySeconds: number
 function parseQueueCapacityBytes(linkRate: string, maxRttSeconds: number): number {
   const bps = parseLinkRateBps(linkRate);
   return Math.max(1, Math.floor(bps * maxRttSeconds / 8));
+}
+
+function linkRateForNodeKinds(fromType: Node["type"], toType: Node["type"], config: TopologyConfig) {
+  if (
+    (fromType === "host" && toType === "tor") ||
+    (fromType === "tor" && toType === "host")
+  ) {
+    return config.link.serverToTorRate;
+  }
+  if (
+    (fromType === "tor" && toType === "agg") ||
+    (fromType === "agg" && toType === "tor")
+  ) {
+    return config.link.torToAggRate;
+  }
+  if (
+    (fromType === "agg" && toType === "core") ||
+    (fromType === "core" && toType === "agg")
+  ) {
+    return config.link.aggToCoreRate;
+  }
+  return getBottleneckLinkRate(config);
 }
 
 function queueColor(ratio: number, fallback: string): string {
@@ -788,16 +804,36 @@ export default function Home() {
   }, [animTime, linkAnimationData]);
 
   const hasPackets = Object.keys(packets).length > 0;
+  const queueLinkRateByLink = useMemo<Record<string, number>>(() => {
+    return Object.fromEntries(
+      Object.keys(packets).map((csvId) => {
+        const ids = parseLinkSvgIds(csvId, resolveNumericNodeId);
+        const fromNode = ids ? nodeMap.get(ids[0]) : null;
+        const toNode = ids ? nodeMap.get(ids[1]) : null;
+        const rate = fromNode && toNode
+          ? parseLinkRateBps(linkRateForNodeKinds(fromNode.type, toNode.type, appliedConfig))
+          : parseLinkRateBps(getBottleneckLinkRate(appliedConfig));
+        return [csvId, rate];
+      })
+    );
+  }, [packets, nodeMap, resolveNumericNodeId, appliedConfig]);
   const queueSeriesByLink = useMemo<Record<string, QueueSeries>>(() => {
     const maxTime = simEndTime > 0 ? simEndTime : 1;
     return Object.fromEntries(
-      Object.entries(packets).map(([linkId, pkts]) => [linkId, buildQueueSeries(pkts, maxTime)])
+      Object.entries(packets).map(([linkId, pkts]) => [
+        linkId,
+        buildQueueSeries(pkts, maxTime, queueLinkRateByLink[linkId] ?? parseLinkRateBps(getBottleneckLinkRate(appliedConfig))),
+      ])
     );
-  }, [packets, simEndTime]);
+  }, [packets, simEndTime, queueLinkRateByLink, appliedConfig]);
 
   const selectedInfos = useMemo<QueueSelectionInfo[]>(() => {
     return selectedQueueCsvIds.map((csvId) => {
-      const queueSeries = queueSeriesByLink[csvId] ?? buildQueueSeries([], simEndTime > 0 ? simEndTime : 1);
+      const queueSeries = queueSeriesByLink[csvId] ?? buildQueueSeries(
+        [],
+        simEndTime > 0 ? simEndTime : 1,
+        queueLinkRateByLink[csvId] ?? parseLinkRateBps(getBottleneckLinkRate(appliedConfig))
+      );
       const parts = csvId.split("-");
       const fromLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[0])))?.label ?? parts[0];
       const toLabel = nodeMap.get(resolveNumericNodeId(parseInt(parts[1])))?.label ?? parts[1];
@@ -805,7 +841,10 @@ export default function Home() {
       const currentSnapshot = findLastSnapshotAtOrBeforeTime(queueSeries.snapshots, animTime);
       const currentBytes = currentSnapshot.bytes;
       const currentPackets = currentSnapshot.packets;
-      const currentDelay = averageDelayAtTime(animTime, currentSnapshot.packets, currentSnapshot.enqueueTimeSum);
+      const currentDelay = queueingDelay(
+        currentSnapshot.bytes,
+        queueLinkRateByLink[csvId] ?? parseLinkRateBps(getBottleneckLinkRate(appliedConfig))
+      );
       const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
       const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
       const points = sampleQueuePoints(queueSeries.points, startTime, animTime);
@@ -832,7 +871,7 @@ export default function Home() {
         points,
       };
     });
-  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig.queue.queueAlgo, appliedConfig.queue.redMinThresholdPct, appliedConfig.queue.redMaxThresholdPct]);
+  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, queueLinkRateByLink, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig]);
 
   const selectedQueueOverlays = useMemo<QueueOverlay[]>(() => {
     const overlays: QueueOverlay[] = [];
@@ -1389,9 +1428,6 @@ export default function Home() {
                           </span>
                           <span>pkts)</span>
                         </div>
-                        <div className="mt-1 text-xs text-stone-400" style={{ fontVariantNumeric: "tabular-nums" }}>
-                          delay: {formatDelay(info.currentDelay)}
-                        </div>
                         <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
                           <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
                           <line x1={pad} y1={pad} x2={pad} y2={height - pad} stroke="rgb(148, 163, 184)" strokeWidth={1} />
@@ -1410,8 +1446,8 @@ export default function Home() {
                           <line x1={currentX} y1={pad} x2={currentX} y2={height - pad} stroke="rgb(220, 229, 124)" strokeWidth={1} />
                         </svg>
                         <div className="mt-2 flex gap-3 text-[11px] text-stone-500 dark:text-stone-400">
-                          <span>blue: queued size (B)</span>
-                          <span>orange: avg wait delay ({delayAxis.unit})</span>
+                          <span>blue: queue size (B)</span>
+                          <span>orange: queueing delay ({delayAxis.unit})</span>
                           {info.redMinBytes !== null && <span>red: RED min/max</span>}
                         </div>
                       </div>
