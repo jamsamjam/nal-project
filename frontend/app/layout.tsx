@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Network Traffic Visualization",
+  title: "DCN Visualization",
   description: "ns-3 simulation",
 };
 

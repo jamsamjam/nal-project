@@ -1131,7 +1131,7 @@ export default function Home() {
           <header className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-stone-500 dark:text-stone-400">ns-3 simulation</p>
-              <h1 className="mt-3 text-3xl font-semibold">Network Traffic Visualization</h1>
+              <h1 className="mt-3 text-3xl font-semibold">DCN Visualization</h1>
             </div>
 
             <div className="w-fit rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">

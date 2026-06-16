@@ -1,4 +1,4 @@
-# Network Traffic Visualization
+# DCN Visualization
 
 Interactive ns-3 network traffic simulator and visualization tool for analyzing packet-level behavior, congestion patterns, and queue dynamics across configurable network topologies.
 
