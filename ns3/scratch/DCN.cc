@@ -660,7 +660,10 @@ main(int argc, char* argv[])
     const double referenceDelaySeconds = MilliSeconds(1).GetSeconds();
     const double referenceRttSeconds = 2.0 * static_cast<double>(maxHostHops) * referenceDelaySeconds;
     const double minSimTimeSeconds = 1.0;
-    simTime = std::max(minSimTimeSeconds, 10.0 * (maxRttSeconds / referenceRttSeconds));
+    const double maxSimTimeSeconds = 4.0;
+    simTime = std::clamp(10.0 * (maxRttSeconds / referenceRttSeconds),
+                         minSimTimeSeconds,
+                         maxSimTimeSeconds);
     if (runTag.empty())
     {
         runTag = "L" + std::to_string(layers)
