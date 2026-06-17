@@ -431,6 +431,95 @@ ComputeMaxHostToHostHops(uint32_t numHosts, uint32_t totalNodes, const std::vect
     return maxHops;
 }
 
+static uint64_t
+MakeDirectedLinkKey(uint32_t from, uint32_t to)
+{
+    return (static_cast<uint64_t>(from) << 32) | static_cast<uint64_t>(to);
+}
+
+static std::vector<std::vector<uint32_t>>
+BuildAdjacency(uint32_t totalNodes, const std::vector<FatTreeLink>& links)
+{
+    std::vector<std::vector<uint32_t>> adj(totalNodes);
+    for (const auto& link : links)
+    {
+        if (link.from >= totalNodes || link.to >= totalNodes)
+            continue;
+        adj[link.from].push_back(link.to);
+        adj[link.to].push_back(link.from);
+    }
+    return adj;
+}
+
+static std::unordered_map<uint64_t, uint32_t>
+ComputeMaxDownstreamHostHopsPerDirectedLink(uint32_t numHosts,
+                                            uint32_t totalNodes,
+                                            const std::vector<FatTreeLink>& links)
+{
+    std::unordered_map<uint64_t, uint32_t> maxHopsByDirectedLink;
+    if (totalNodes == 0)
+        return maxHopsByDirectedLink;
+
+    const auto adj = BuildAdjacency(totalNodes, links);
+    std::vector<std::vector<int32_t>> allDistances(totalNodes, std::vector<int32_t>(totalNodes, -1));
+
+    for (uint32_t src = 0; src < totalNodes; ++src)
+    {
+        std::queue<uint32_t> q;
+        allDistances[src][src] = 0;
+        q.push(src);
+
+        while (!q.empty())
+        {
+            const uint32_t cur = q.front();
+            q.pop();
+            for (uint32_t nxt : adj[cur])
+            {
+                if (allDistances[src][nxt] != -1)
+                    continue;
+                allDistances[src][nxt] = allDistances[src][cur] + 1;
+                q.push(nxt);
+            }
+        }
+    }
+
+    for (uint32_t src = 0; src < totalNodes; ++src)
+    {
+        for (uint32_t nxt : adj[src])
+        {
+            const uint64_t key = MakeDirectedLinkKey(src, nxt);
+            uint32_t maxHops = 1;
+            for (uint32_t dst = 0; dst < numHosts; ++dst)
+            {
+                if (dst == src)
+                    continue;
+                const int32_t srcToDstHops = allDistances[src][dst];
+                const int32_t nxtToDstHops = allDistances[nxt][dst];
+                if (srcToDstHops <= 0 || nxtToDstHops < 0)
+                    continue;
+
+                // This neighbor can be the first hop on a shortest path from src to dst.
+                if (srcToDstHops == nxtToDstHops + 1)
+                    maxHops = std::max(maxHops, static_cast<uint32_t>(srcToDstHops));
+            }
+            maxHopsByDirectedLink[key] = maxHops;
+        }
+    }
+
+    return maxHopsByDirectedLink;
+}
+
+static uint64_t
+ComputeQueueBytes(uint64_t linkRateBps, uint32_t maxRttHops, double perLinkDelaySeconds)
+{
+    const double maxRttSeconds = 2.0 * static_cast<double>(maxRttHops) * perLinkDelaySeconds;
+    const double queueBytes = static_cast<double>(linkRateBps) * maxRttSeconds / 8.0;
+    const double cappedQueueBytes = std::clamp(queueBytes,
+                                               1.0,
+                                               static_cast<double>(std::numeric_limits<uint32_t>::max()));
+    return static_cast<uint64_t>(cappedQueueBytes);
+}
+
 struct DcnTopo
 {
     uint32_t layers;
@@ -654,6 +743,8 @@ main(int argc, char* argv[])
 
     DcnTopo topo(layers, k, torCount, aggCount, serversPerTor);
     std::vector<FatTreeLink> links = topo.buildLinks();
+    const auto maxDownstreamHostHopsByDirectedLink =
+        ComputeMaxDownstreamHostHopsPerDirectedLink(topo.numHosts, topo.total, links);
     const uint32_t maxHostHops = ComputeMaxHostToHostHops(topo.numHosts, topo.total, links);
     const double linkDelaySeconds = Time(linkDelay).GetSeconds();
     const double maxRttSeconds = 2.0 * static_cast<double>(maxHostHops) * linkDelaySeconds;
@@ -693,9 +784,6 @@ main(int argc, char* argv[])
     const uint64_t bottleneckBps = std::min({DataRate(serverToTorRate).GetBitRate(),
                                              DataRate(torToAggRate).GetBitRate(),
                                              DataRate(aggToCoreRate).GetBitRate()});
-    uint64_t bdpBytes = static_cast<uint64_t>(bottleneckBps * maxRttSeconds / 8.0);
-    if (bdpBytes < 1) bdpBytes = 1;
-    std::string queueSizeStr = std::to_string(bdpBytes) + "B";
     redMinThresholdPct = std::clamp(redMinThresholdPct, 0.0, 100.0);
     redMaxThresholdPct = std::clamp(redMaxThresholdPct, 0.0, 100.0);
 
@@ -704,11 +792,11 @@ main(int argc, char* argv[])
         std::swap(redMinThresholdPct, redMaxThresholdPct);
     }
 
-    const double redMinThresholdBytes = static_cast<double>(bdpBytes) * redMinThresholdPct / 100.0;
-    const double redMaxThresholdBytes = static_cast<double>(bdpBytes) * redMaxThresholdPct / 100.0;
     const bool useRedQueue = (queueDiscType == "ns3::RedQueueDisc");
     const std::string actualQueueDiscType = queueDiscType;
     const bool useEcn = useRedQueue || (tcpVariant == "TcpDctcp");
+    const uint64_t maxQueueBytesEstimate = ComputeQueueBytes(bottleneckBps, maxHostHops, linkDelaySeconds);
+    const std::string initialQueueSizeStr = "1B";
 
     std::cout << "DCN layers=" << layers
               << " k=" << k
@@ -727,7 +815,7 @@ main(int argc, char* argv[])
               << " maxHostHops=" << maxHostHops
               << " maxRttSeconds=" << maxRttSeconds
               << " simTime=" << simTime
-              << " queueBytes=" << bdpBytes
+              << " maxQueueBytes=" << maxQueueBytesEstimate
               << " redMinThresholdPct=" << redMinThresholdPct
               << " redMaxThresholdPct=" << redMaxThresholdPct
               << " queueDiscImpl=" << actualQueueDiscType
@@ -753,11 +841,11 @@ main(int argc, char* argv[])
         // ns3/src/traffic-control/model/red-queue-disc.cc
         tch.SetRootQueueDisc(actualQueueDiscType,
                              "MaxSize",
-                             StringValue(queueSizeStr),
+                             StringValue(initialQueueSizeStr),
                              "MinTh",
-                             DoubleValue(redMinThresholdBytes),
+                             DoubleValue(1.0),
                              "MaxTh",
-                             DoubleValue(redMaxThresholdBytes),
+                             DoubleValue(1.0),
                              "UseEcn",
                              BooleanValue(true),
                              "UseHardDrop",
@@ -771,7 +859,7 @@ main(int argc, char* argv[])
     }
     else
     {
-        tch.SetRootQueueDisc(actualQueueDiscType, "MaxSize", StringValue(queueSizeStr));
+        tch.SetRootQueueDisc(actualQueueDiscType, "MaxSize", StringValue(initialQueueSizeStr));
     }
 
     struct LinkQdisc {
@@ -788,17 +876,15 @@ main(int argc, char* argv[])
     for (size_t i = 0; i < links.size(); ++i)
     {
         const auto& link = links[i];
+        const std::string perLinkRate =
+            RateForLink(topo, link, serverToTorRate, torToAggRate, aggToCoreRate);
+        const uint64_t perLinkRateBps = DataRate(perLinkRate).GetBitRate();
         NodeContainer pair(nodes.Get(link.from), nodes.Get(link.to));
 
         PointToPointHelper p2p;
         // set NIC capacity to 1p so we can observe qdisc only
         p2p.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue("1p"));
-        p2p.SetDeviceAttribute("DataRate",
-                               StringValue(RateForLink(topo,
-                                                       link,
-                                                       serverToTorRate,
-                                                       torToAggRate,
-                                                       aggToCoreRate)));
+        p2p.SetDeviceAttribute("DataRate", StringValue(perLinkRate));
         p2p.SetChannelAttribute("Delay", StringValue(linkDelay));
 
         NetDeviceContainer devices = p2p.Install(pair);
@@ -813,6 +899,28 @@ main(int argc, char* argv[])
                 CreateObject<DropTailQueue<Packet>>());
         }
         QueueDiscContainer qdiscs = tch.Install(devices);
+        for (uint32_t direction = 0; direction < 2; ++direction)
+        {
+            const uint32_t fromNode = direction == 0 ? link.from : link.to;
+            const uint32_t toNode = direction == 0 ? link.to : link.from;
+            const uint64_t key = MakeDirectedLinkKey(fromNode, toNode);
+            const auto hopsIt = maxDownstreamHostHopsByDirectedLink.find(key);
+            const uint32_t maxDownstreamHops =
+                hopsIt != maxDownstreamHostHopsByDirectedLink.end() ? hopsIt->second : 1;
+            const uint64_t queueBytes = ComputeQueueBytes(perLinkRateBps, maxDownstreamHops, linkDelaySeconds);
+            Ptr<QueueDisc> qdisc = qdiscs.Get(direction);
+            qdisc->SetMaxSize(QueueSize(QueueSizeUnit::BYTES, static_cast<uint32_t>(queueBytes)));
+
+            if (useRedQueue)
+            {
+                qdisc->SetAttributeFailSafe("MinTh",
+                                            DoubleValue(static_cast<double>(queueBytes) * redMinThresholdPct / 100.0));
+                qdisc->SetAttributeFailSafe("MaxTh",
+                                            DoubleValue(static_cast<double>(queueBytes) * redMaxThresholdPct / 100.0));
+                qdisc->SetAttributeFailSafe("LinkBandwidth", DataRateValue(DataRate(perLinkRateBps)));
+                qdisc->SetAttributeFailSafe("LinkDelay", TimeValue(Time(linkDelay)));
+            }
+        }
         qdiscsByLink.push_back({link.from, link.to, qdiscs.Get(0), devices.Get(0), devices.Get(1)});
         qdiscsByLink.push_back({link.to, link.from, qdiscs.Get(1), devices.Get(1), devices.Get(0)});
 

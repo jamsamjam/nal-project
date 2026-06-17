@@ -394,8 +394,12 @@ function parseLinkDelaySeconds(linkDelay: string): number {
   return parseFloat(d);
 }
 
-function computeMaxRttSeconds(topology: RenderTopology, linkDelaySeconds: number): number {
-  if (linkDelaySeconds <= 0 || topology.nodes.length === 0) return 0;
+function computeQueueCapacityBytesByDirectedLink(
+  topology: RenderTopology,
+  config: TopologyConfig,
+  resolveSvgNodeId: (svgId: string) => number
+): Record<string, number> {
+  if (topology.nodes.length === 0) return {};
 
   const idToIndex = new Map<string, number>();
   topology.nodes.forEach((node, idx) => idToIndex.set(node.id, idx));
@@ -409,41 +413,63 @@ function computeMaxRttSeconds(topology: RenderTopology, linkDelaySeconds: number
     adj[b].push(a);
   }
 
-  const hostIndices = topology.nodes
-    .map((node, idx) => ({ type: node.type, idx }))
-    .filter((v) => v.type === "host")
-    .map((v) => v.idx);
+  const allDistances = Array.from(
+    { length: topology.nodes.length },
+    () => new Array<number>(topology.nodes.length).fill(-1)
+  );
 
-  if (hostIndices.length < 2) return 2 * linkDelaySeconds;
-
-  let maxHops = 1;
-  for (const src of hostIndices) {
-    const dist = new Array<number>(topology.nodes.length).fill(-1);
+  for (let src = 0; src < topology.nodes.length; src++) {
     const queue: number[] = [src];
-    dist[src] = 0;
+    allDistances[src][src] = 0;
 
     for (let head = 0; head < queue.length; head++) {
       const cur = queue[head];
       for (const nxt of adj[cur]) {
-        if (dist[nxt] !== -1) continue;
-        dist[nxt] = dist[cur] + 1;
+        if (allDistances[src][nxt] !== -1) continue;
+        allDistances[src][nxt] = allDistances[src][cur] + 1;
         queue.push(nxt);
       }
     }
+  }
 
-    for (const dst of hostIndices) {
-      if (dst === src) continue;
-      const hops = dist[dst];
-      if (hops > maxHops) maxHops = hops;
+  const hostIndices = topology.nodes
+    .map((node, idx) => ({ type: node.type, idx }))
+    .filter((entry) => entry.type === "host")
+    .map((entry) => entry.idx);
+  const numericIds = topology.nodes.map((node) => resolveSvgNodeId(node.id));
+  const linkDelaySeconds = parseLinkDelaySeconds(config.link.delay);
+  const capacities: Record<string, number> = {};
+
+  for (const link of topology.links) {
+    const fromIndex = idToIndex.get(link.from);
+    const toIndex = idToIndex.get(link.to);
+    if (fromIndex === undefined || toIndex === undefined) continue;
+
+    for (const [src, nxt] of [[fromIndex, toIndex], [toIndex, fromIndex]] as const) {
+      const srcNumeric = numericIds[src];
+      const nxtNumeric = numericIds[nxt];
+      if (srcNumeric < 0 || nxtNumeric < 0) continue;
+
+      let maxHops = 1;
+      for (const dst of hostIndices) {
+        if (dst === src) continue;
+        const srcToDstHops = allDistances[src][dst];
+        const nxtToDstHops = allDistances[nxt][dst];
+        if (srcToDstHops <= 0 || nxtToDstHops < 0) continue;
+        if (srcToDstHops === nxtToDstHops + 1) {
+          maxHops = Math.max(maxHops, srcToDstHops);
+        }
+      }
+
+      const linkRateBps = parseLinkRateBps(
+        linkRateForNodeKinds(topology.nodes[src].type, topology.nodes[nxt].type, config)
+      );
+      const maxRttSeconds = 2 * maxHops * linkDelaySeconds;
+      capacities[`${srcNumeric}-${nxtNumeric}`] = Math.max(1, Math.floor(linkRateBps * maxRttSeconds / 8));
     }
   }
 
-  return 2 * maxHops * linkDelaySeconds;
-}
-
-function parseQueueCapacityBytes(linkRate: string, maxRttSeconds: number): number {
-  const bps = parseLinkRateBps(linkRate);
-  return Math.max(1, Math.floor(bps * maxRttSeconds / 8));
+  return capacities;
 }
 
 function linkRateForNodeKinds(fromType: Node["type"], toType: Node["type"], config: TopologyConfig) {
@@ -702,13 +728,9 @@ export default function Home() {
     return max > 0 ? max : 10;
   }, [packets]);
 
-  const queueCapacityBytes = useMemo(
-    () => {
-      const delayS = parseLinkDelaySeconds(appliedConfig.link.delay);
-      const maxRttSeconds = computeMaxRttSeconds(topology, delayS);
-      return parseQueueCapacityBytes(getBottleneckLinkRate(appliedConfig), maxRttSeconds);
-    },
-    [appliedConfig, topology]
+  const queueCapacityBytesByLink = useMemo(
+    () => computeQueueCapacityBytesByDirectedLink(topology, appliedConfig, resolveSvgNodeId),
+    [topology, appliedConfig, resolveSvgNodeId]
   );
 
   const linkAnimationData = useMemo<Record<string, LinkAnimationData>>(() => {
@@ -891,33 +913,34 @@ export default function Home() {
       const linkRateBps = queueLinkRateByLink[csvId] ?? parseLinkRateBps(getBottleneckLinkRate(appliedConfig));
       const currentDelay = queueingDelay(currentSnapshot.bytes, linkRateBps);
       const maxTime = simEndTime > 0 ? simEndTime : 1;
-      const capacityPackets = Math.max(1, Math.floor(queueCapacityBytes / DATA_PACKET_BYTES));
-      const ratio = queueCapacityBytes > 0 ? currentBytes / queueCapacityBytes : 0;
+      const capacityBytes = queueCapacityBytesByLink[csvId] ?? 1;
+      const capacityPackets = Math.max(1, Math.floor(capacityBytes / DATA_PACKET_BYTES));
+      const ratio = capacityBytes > 0 ? currentBytes / capacityBytes : 0;
       const points = sampledQueuePointsByLink[csvId] ?? sampleQueuePoints(queueSeries.points, startTime, maxTime);
-      const maxSize = Math.max(1, queueCapacityBytes);
-      const maxDelay = Math.max(1e-6, (queueCapacityBytes * 8) / linkRateBps);
+      const maxSize = Math.max(1, capacityBytes);
+      const maxDelay = Math.max(1e-6, (capacityBytes * 8) / linkRateBps);
       return {
         csvId,
         label: `${fromLabel} → ${toLabel}`,
         startTime,
         currentBytes,
-        capacityBytes: queueCapacityBytes,
+        capacityBytes,
         currentDelay,
         currentPackets,
         capacityPackets,
         ratio,
         redMinBytes: appliedConfig.queue.queueAlgo === "RedQueueDisc"
-          ? (queueCapacityBytes * appliedConfig.queue.redMinThresholdPct) / 100
+          ? (capacityBytes * appliedConfig.queue.redMinThresholdPct) / 100
           : null,
         redMaxBytes: appliedConfig.queue.queueAlgo === "RedQueueDisc"
-          ? (queueCapacityBytes * appliedConfig.queue.redMaxThresholdPct) / 100
+          ? (capacityBytes * appliedConfig.queue.redMaxThresholdPct) / 100
           : null,
         maxDelay,
         maxSize,
         points,
       };
     });
-  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, sampledQueuePointsByLink, queueLinkRateByLink, animTime, queueCapacityBytes, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig]);
+  }, [selectedQueueCsvIds, selectedQueueStartTimes, queueSeriesByLink, sampledQueuePointsByLink, queueLinkRateByLink, animTime, queueCapacityBytesByLink, nodeMap, resolveNumericNodeId, simEndTime, appliedConfig]);
 
   const selectedQueueOverlays = useMemo<QueueOverlay[]>(() => {
     const overlays: QueueOverlay[] = [];
@@ -1278,7 +1301,10 @@ export default function Home() {
 
                   const csvIds = csvIdsForSvgLink(link.from, link.to, resolveSvgNodeId, packets);
                   const depth = csvIds.reduce((s, id) => s + (linkQueueDepths[id] ?? 0), 0);
-                  const capacityBytes = csvIds.length * queueCapacityBytes;
+                  const capacityBytes = csvIds.reduce(
+                    (sum, id) => sum + (queueCapacityBytesByLink[id] ?? 1),
+                    0
+                  );
                   const ratio = hasPackets && capacityBytes > 0 ? depth / capacityBytes : 0;
                   const isBottleneck = ratio > 0.8;
                   const stroke = queueColor(ratio, lineStroke);
