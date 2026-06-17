@@ -852,9 +852,78 @@ def project_configured(current_cmake_cache_folder):
     return True
 
 
+def get_cached_cxx_compiler(current_cmake_cache_folder):
+    if not project_configured(current_cmake_cache_folder):
+        return None
+    with open(
+        os.path.join(current_cmake_cache_folder, "CMakeCache.txt"), "r", encoding="utf-8"
+    ) as f:
+        contents = f.read()
+    matches = re.findall("(CMAKE_CXX_COMPILER):.*=(.*)", contents)
+    return matches[0][1] if matches else None
+
+
+def cmake_compiler_override_requested(program_args):
+    compiler_flags = ("-DCMAKE_CXX_COMPILER=", "-DCMAKE_C_COMPILER=")
+    return any(arg.startswith(compiler_flags) for arg in program_args)
+
+
+def detect_macos_compiler_fallback():
+    if sys.platform != "darwin":
+        return None
+    if os.getenv("CC") or os.getenv("CXX"):
+        return None
+
+    default_cxx = shutil.which("c++") or shutil.which("clang++")
+    if not default_cxx:
+        return None
+
+    try:
+        version_output = subprocess.check_output(
+            [default_cxx, "--version"], stderr=subprocess.STDOUT, text=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    if "Apple clang version 17." not in version_output:
+        return None
+
+    compiler_candidates = glob.glob("/opt/homebrew/bin/g++-*")
+    compiler_candidates.extend(glob.glob("/usr/local/bin/g++-*"))
+    versioned_candidates = []
+    for candidate in compiler_candidates:
+        match = re.search(r"g\+\+-(\d+)$", candidate)
+        gcc_candidate = candidate.replace("g++-", "gcc-")
+        if match and os.path.exists(gcc_candidate):
+            versioned_candidates.append((int(match.group(1)), candidate))
+
+    if not versioned_candidates:
+        return None
+
+    _, fallback_cxx = max(versioned_candidates)
+    fallback_cc = fallback_cxx.replace("g++-", "gcc-")
+    return fallback_cc, fallback_cxx
+
+
 def configure_cmake(
     cmake, args, current_cmake_cache_folder, current_cmake_generator, output, dry_run=False
 ):
+    fallback_cc = None
+    fallback_cxx = None
+    if not cmake_compiler_override_requested(args.program_args):
+        fallback = detect_macos_compiler_fallback()
+        if fallback:
+            fallback_cc, fallback_cxx = fallback
+
+    if fallback_cxx and project_configured(current_cmake_cache_folder):
+        cached_cxx = get_cached_cxx_compiler(current_cmake_cache_folder)
+        if cached_cxx and os.path.realpath(cached_cxx) != os.path.realpath(fallback_cxx):
+            cache_path = os.path.relpath(current_cmake_cache_folder, ns3_path)
+            print_and_buffer("rm -R %s" % cache_path)
+            if not dry_run:
+                shutil.rmtree(current_cmake_cache_folder, ignore_errors=True)
+            current_cmake_cache_folder = None
+
     # Aggregate all flags to configure CMake
     cmake_args = [cmake, "-S", ns3_path]
 
@@ -884,6 +953,11 @@ def configure_cmake(
             cmake_args.append(f"-DPython3_EXECUTABLE={sys.executable}")
 
     cmake_args.extend(["-B", current_cmake_cache_folder])
+
+    if fallback_cc:
+        cmake_args.append("-DCMAKE_C_COMPILER=%s" % fallback_cc)
+    if fallback_cxx:
+        cmake_args.append("-DCMAKE_CXX_COMPILER=%s" % fallback_cxx)
 
     # C++ standard
     if args.cxx_standard is not None:
