@@ -611,8 +611,6 @@ function buildTwoLayerTopology(torCount: number, aggCount: number, serversPerTor
   return { nodes, links, error: null };
 }
 
-
-
 export default function Home() {
   const MAX_SELECTED_QUEUES = 4;
   const playbackRates = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1];
@@ -1122,7 +1120,6 @@ export default function Home() {
   }
 
   async function runSimulation() {
-    // initialize exisiting output
     setLoading(true);
     setError(null);
     setPackets({});
@@ -1511,7 +1508,6 @@ export default function Home() {
                     const innerW = width - pad * 2;
                     const innerH = height - pad * 2;
                     const maxTime = simEndTime > 0 ? simEndTime : 1;
-                    const delayAxis = delayUnitScale(info.maxDelay);
                     const chartClipId = `queue-chart-clip-${info.csvId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
                     const redMinY = info.redMinBytes === null
                       ? null

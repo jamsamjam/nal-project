@@ -60,7 +60,7 @@ type DelayUnit = (typeof delayUnits)[number];
 
 export function parseLinkRateBps(linkRate: string): number {
   const r = linkRate.trim();
-  if (r.endsWith("Gbps")) return parseFloat(r) * 1e9; // TODO
+  if (r.endsWith("Gbps")) return parseFloat(r) * 1e9;
   if (r.endsWith("Mbps")) return parseFloat(r) * 1e6;
   if (r.endsWith("Kbps")) return parseFloat(r) * 1e3;
   return parseFloat(r);

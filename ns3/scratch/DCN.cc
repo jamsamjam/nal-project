@@ -16,11 +16,9 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <tuple>
 #include <unordered_map>
 #include <queue>
 #include <vector>
@@ -343,7 +341,7 @@ DequeueTrace(std::string linkId, Ptr<const Packet> packet)
 
     auto it = trace.arrivals.find(id); // returns end() if not found
     if (it == trace.arrivals.end() || it->second.logged)
-        // not recorded when enqueued or alreadt logged
+        // not recorded when enqueued or already logged
         return;
 
     it->second.dequeueTime = dequeueTime;
@@ -578,7 +576,7 @@ struct DcnTopo
     uint32_t torId(uint32_t pod, uint32_t idx) const
     {
         uint32_t half = kPods / 2;
-        return numHosts + pod * half + idx; // TODO
+        return numHosts + pod * half + idx;
     }
 
     uint32_t aggId(uint32_t pod, uint32_t idx) const
