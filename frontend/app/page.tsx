@@ -95,6 +95,67 @@ type QueueOverlay = {
   markerY: number;
 };
 
+async function renderSvgToPngBlob(svg: SVGSVGElement): Promise<Blob> {
+  const cloned = svg.cloneNode(true) as SVGSVGElement;
+  const widthAttr = svg.getAttribute("width");
+  const heightAttr = svg.getAttribute("height");
+  const width = Math.max(1, Math.ceil(Number(widthAttr ?? svg.clientWidth ?? 1)));
+  const height = Math.max(1, Math.ceil(Number(heightAttr ?? svg.clientHeight ?? 1)));
+  cloned.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  cloned.setAttribute("width", String(width));
+  cloned.setAttribute("height", String(height));
+  if (!cloned.getAttribute("viewBox")) {
+    cloned.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  }
+
+  const serialized = new XMLSerializer().serializeToString(cloned);
+  const svgBlob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new window.Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Failed to render queue graph image."));
+      img.src = url;
+    });
+
+    const scale = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const canvas = document.createElement("canvas");
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas rendering is unavailable.");
+    }
+    context.scale(scale, scale);
+    context.drawImage(image, 0, 0, width, height);
+
+    const pngBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Failed to encode queue graph image."));
+      }, "image/png");
+    });
+
+    return pngBlob;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function copySvgImageToClipboard(svg: SVGSVGElement) {
+  if (typeof window === "undefined" || !navigator.clipboard || typeof ClipboardItem === "undefined") {
+    throw new Error("Image clipboard copy is not supported in this browser.");
+  }
+  const blob = await renderSvgToPngBlob(svg);
+  await navigator.clipboard.write([
+    new ClipboardItem({
+      "image/png": blob,
+    }),
+  ]);
+}
+
 function centerTopology(topology: RenderTopology, minWidth = 900, horizontalPadding = 120) {
   if (!topology.nodes.length) {
     return { topology, width: minWidth };
@@ -569,10 +630,13 @@ export default function Home() {
   const [selectedQueueCsvIds, setSelectedQueueCsvIds] = useState<string[]>([]);
   const [selectedQueueStartTimes, setSelectedQueueStartTimes] = useState<Record<string, number>>({});
   const [focusedQueueCsvId, setFocusedQueueCsvId] = useState<string | null>(null);
+  const [copyingQueueCsvId, setCopyingQueueCsvId] = useState<string | null>(null);
+  const [copiedQueueCsvId, setCopiedQueueCsvId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [topologyConfig, setTopologyConfig] = useState<TopologyConfig | null>(null);
   const animRaf = useRef<number | null>(null);
   const animStartSim = useRef(0);
+  const queueChartRefs = useRef<Record<string, SVGSVGElement | null>>({});
   const animationCursorRef = useRef<{
     cursors: Record<string, LinkAnimationCursor>;
     time: number;
@@ -590,6 +654,29 @@ export default function Home() {
     setTheme(next);
     localStorage.setItem("theme", next);
     document.documentElement.classList.toggle("dark", next === "dark");
+  }
+
+  async function copyQueueGraphCard(csvId: string) {
+    const chart = queueChartRefs.current[csvId];
+    if (!chart) {
+      setError("Queue graph not found.");
+      return;
+    }
+
+    try {
+      setCopyingQueueCsvId(csvId);
+      setCopiedQueueCsvId(null);
+      await copySvgImageToClipboard(chart);
+      setCopiedQueueCsvId(csvId);
+      window.setTimeout(() => {
+        setCopiedQueueCsvId((current) => (current === csvId ? null : current));
+      }, 1600);
+    } catch (copyError) {
+      const message = copyError instanceof Error ? copyError.message : "Failed to copy queue graph image.";
+      setError(message);
+    } finally {
+      setCopyingQueueCsvId((current) => (current === csvId ? null : current));
+    }
   }
 
   function toggleQueueSelection(csvId: string) {
@@ -1446,13 +1533,35 @@ export default function Home() {
                     return (
                       <div
                         key={info.csvId}
-                        className={`w-[300px] shrink-0 rounded-xl border bg-stone-50 p-4 dark:bg-stone-900`}
+                        className={`group relative w-[300px] shrink-0 rounded-xl border bg-stone-50 p-4 dark:bg-stone-900`}
                         style={{
                           cursor: "pointer",
                           borderColor: focusedQueueCsvId === info.csvId ? "rgb(220, 229, 124)" : undefined,
                         }}
                         onClick={() => setFocusedQueueCsvId(info.csvId)}
                       >
+                        <button
+                          type="button"
+                          aria-label="Copy queue graph image"
+                          className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-md border border-stone-200 bg-white/92 text-stone-500 opacity-0 shadow-sm transition hover:text-stone-900 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-stone-400 group-hover:opacity-100 dark:border-stone-700 dark:bg-stone-950/92 dark:text-stone-300 dark:hover:text-stone-50"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void copyQueueGraphCard(info.csvId);
+                          }}
+                        >
+                          {copyingQueueCsvId === info.csvId ? (
+                            <span className="text-[10px] font-medium">...</span>
+                          ) : copiedQueueCsvId === info.csvId ? (
+                            <svg viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.7">
+                              <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+                            </svg>
+                          ) : (
+                            <svg viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.3">
+                              <rect x="5" y="3" width="7" height="9" rx="1.5" />
+                              <path d="M4 5H3a1 1 0 0 0-1 1v7.5A1.5 1.5 0 0 0 3.5 15H9a1 1 0 0 0 1-1v-1" />
+                            </svg>
+                          )}
+                        </button>
                         <p className="truncate font-mono text-xs text-stone-500 dark:text-stone-400">{info.label}</p>
                         <div className="mt-2 inline-flex flex-nowrap items-baseline gap-x-0.5 whitespace-nowrap text-xs text-stone-400" style={{ fontVariantNumeric: "tabular-nums" }}>
                           <span className="text-right" style={{ width: "7ch" }}>
@@ -1479,7 +1588,14 @@ export default function Home() {
                             {formatDelay(info.currentDelay)}
                           </span>
                         </div>
-                        <svg width={width} height={height} className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950">
+                        <svg
+                          ref={(node) => {
+                            queueChartRefs.current[info.csvId] = node;
+                          }}
+                          width={width}
+                          height={height}
+                          className="mt-3 block rounded border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-950"
+                        >
                           <defs>
                             <clipPath id={chartClipId}>
                               <rect x={pad} y={pad} width={visibleW} height={innerH} />
